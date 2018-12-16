@@ -30,53 +30,70 @@ mod x86_64_unix {
 
             let mut stack: Vec<u8> = vec![0; 1<<14];
 
+            let our_rbp: *mut u8;
+            let our_rsp: *mut u8;
+            let our_rip: *mut u8;
+
+            let mut our_fcw: u16 = 0;
+            let mut our_mxcsr: u32 = 0;
+
             let prev_rbp: *mut u8;
             let prev_rsp: *mut u8;
             let prev_rip: *mut u8;
 
-            extern "C" fn inner(f: F)
-            where
-                F: Send + FnOnce(Context),
-            {
-                let caller_rbp: *mut u8;
-                let caller_rsp: *mut u8;
-                let caller_rip: *mut u8;
+            asm!(
+                "
+                    mov $0, rbp
+                    mov $1, rsp
+                    lea $2, [rip+back_5ebe61aa363e6893]
 
-                // absolutely need rbp to be the frame register here
-                asm!(
-                    "
-                        mov $0, [rbp]
-                        lea $1, [rbp + 16]
-                        mov $2, [rbp + 8]
-                    "
-                :
-                    "=r"(caller_rbp),
-                    "=r"(caller_rsp),
-                    "=r"(caller_rip),
-                :
-                :
-                :
-                    "intel"
-                );
+                    fstcw $3
+                    vstmxcsr $4
+                "
+            :
+                "=r"(our_rbp),
+                "=r"(our_rsp),
+                "=r"(our_rip),
+                "=*m"(&mut our_fcw),
+                "=*m"(&mut our_mxcsr)
+            :
+            :
+            :
+                "intel"
+            );
 
-                f();
-            }
-            inner();
+            f(
+                Context {
+                    rbp: our_rbp,
+                    rsp: our_rsp,
+                    rip: our_rip,
+                }
+            );
 
             asm!(
                 "
+                back_5ebe61aa363e6893:
                     mov $0, r12
                     mov $1, r13
                     mov $2, r14
+
+                    fldcw $3
+                    vldmxcsr $4
                 "
             :
                 "=r"(prev_rbp),
                 "=r"(prev_rsp),
                 "=r"(prev_rip)
             :
+                "*m"(&our_fcw),
+                "*m"(&our_mxcsr)
             :
+                "r8", "r9", "rcx", // prev
+                "r12", "r13", "r14", // ours
+                "rbx", "r15", // callee-save
+                "memory"
             :
-                "intel"
+                "intel", "volatile"
             );
 
             Context {
@@ -103,21 +120,21 @@ mod x86_64_unix {
             // 4. save activator state
             asm!(
                 "
-                    fstcw $3
-                    vstmxcsr $4
-
                     mov r8, $5
                     mov r9, $6
                     mov rcx, $7
 
+                    fstcw $3
+                    vstmxcsr $4
+
                     mov r12, rbp
                     mov r13, rsp
-                    lea r14, [rip+back]
+                    lea r14, [rip+back_b3c037d6b3912998]
 
                     mov rbp, r8
                     mov rsp, r9
                     jmp rcx
-                back:
+                back_b3c037d6b3912998:
                     mov $0, r12
                     mov $1, r13
                     mov $2, r14
@@ -129,8 +146,8 @@ mod x86_64_unix {
                 "=r"(prev_rbp),
                 "=r"(prev_rsp),
                 "=r"(prev_rip),
-                "=&*m"(&mut our_fcw)
-                "=&*m"(&mut our_mxcsr)
+                "=*m"(&mut our_fcw),
+                "=*m"(&mut our_mxcsr)
             :
                 "r"(self.rbp),
                 "r"(self.rsp),
