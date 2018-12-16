@@ -26,6 +26,8 @@ pub extern "C" fn thing(rbp: *mut u8, c: Context) {
 
                 mov rbp, rax
                 lea rsp, [rax - 128]
+                sub rsp, 128
+                sub rsp, 128
 
                 mov $0, r8
                 mov $1, r9
@@ -65,6 +67,8 @@ pub extern "C" fn thing(rbp: *mut u8, c: Context) {
     }
 
     println!("thing was reactivated!");
+
+    unreachable!(); // lie
 }
 
 // TODO: do we also need to specify pointer size = 64?
