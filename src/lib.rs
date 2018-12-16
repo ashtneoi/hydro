@@ -3,7 +3,7 @@
 use std::is_x86_feature_detected;
 
 // #[cfg(all(unix, target_arch = "x86_64"))]
-// pub use self::x86_64_unix::???;
+ pub use self::x86_64_unix::Context;
 
 // TODO: do we also need to specify pointer size = 64?
 #[cfg(all(unix, target_arch = "x86_64"))]
@@ -16,7 +16,7 @@ mod x86_64_unix {
     }
 
     impl Context {
-        pub unsafe fn call<F>(f: F) -> Context
+        pub unsafe extern "C" fn call<F>(f: F) -> Context
         where
             F: Send + FnOnce(Context),
         {
@@ -28,8 +28,61 @@ mod x86_64_unix {
             // 1. allocate stack
             // 2. save state
 
+            let mut stack: Vec<u8> = vec![0; 1<<14];
+
+            let prev_rbp: *mut u8;
+            let prev_rsp: *mut u8;
+            let prev_rip: *mut u8;
+
+            extern "C" fn inner(f: F)
+            where
+                F: Send + FnOnce(Context),
+            {
+                let caller_rbp: *mut u8;
+                let caller_rsp: *mut u8;
+                let caller_rip: *mut u8;
+
+                // absolutely need rbp to be the frame register here
+                asm!(
+                    "
+                        mov $0, [rbp]
+                        lea $1, [rbp + 16]
+                        mov $2, [rbp + 8]
+                    "
+                :
+                    "=r"(caller_rbp),
+                    "=r"(caller_rsp),
+                    "=r"(caller_rip),
+                :
+                :
+                :
+                    "intel"
+                );
+
+                f();
+            }
+            inner();
+
+            asm!(
+                "
+                    mov $0, r12
+                    mov $1, r13
+                    mov $2, r14
+                "
+            :
+                "=r"(prev_rbp),
+                "=r"(prev_rsp),
+                "=r"(prev_rip)
+            :
+            :
+            :
+                "intel"
+            );
+
             Context {
-                rbp: 
+                rbp: prev_rbp,
+                rsp: prev_rsp,
+                rip: prev_rip,
             }
         }
 
