@@ -6,6 +6,8 @@ use std::is_x86_feature_detected;
 pub use self::x86_64_unix::Context;
 
 pub fn thing(rsp: *mut u8, c: Context) {
+    println!("about to pivot stack");
+
     // pivot stack
 
     unsafe {
@@ -66,7 +68,8 @@ mod x86_64_unix {
             let mut stack: Vec<u8> = vec![0; 1<<14];
 
             let next_rsp =
-                (stack.as_mut_ptr() as usize & 0xFFFF_FFFF_FFFF_FFF0)
+                (stack[1<<14-2..1<<14-1].as_mut_ptr() as usize
+                    & 0xFFFF_FFFF_FFFF_FF00)
                 as *mut u8;
 
             let our_rbp: *mut u8;
@@ -88,7 +91,6 @@ mod x86_64_unix {
                     mov $1, rsp
                     lea $2, [rip+back_5ebe61aa363e6893]
 
-                    fstcw $3
                     vstmxcsr $4
                 "
             :
@@ -102,6 +104,8 @@ mod x86_64_unix {
             :
                 "intel"
             );
+
+            println!("here we go");
 
             f(
                 next_rsp,
@@ -119,7 +123,6 @@ mod x86_64_unix {
                     mov $1, r13
                     mov $2, r14
 
-                    fldcw $3
                     vldmxcsr $4
                 "
             :
@@ -157,6 +160,8 @@ mod x86_64_unix {
             let prev_rsp: *mut u8;
             let prev_rip: *mut u8;
 
+            println!("about to activate a task");
+
             // 1. save state
             // 2. load activatee state
             // 3. jump to activatee
@@ -168,7 +173,6 @@ mod x86_64_unix {
                     mov r9, $6
                     mov rcx, $7
 
-                    fstcw $3
                     vstmxcsr $4
 
                     mov r12, rbp
@@ -183,7 +187,6 @@ mod x86_64_unix {
                     mov $1, r13
                     mov $2, r14
 
-                    fldcw $3
                     vldmxcsr $4
                 "
             :
