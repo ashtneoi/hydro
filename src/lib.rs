@@ -53,7 +53,7 @@ pub extern "C" fn thing(rbp: *mut u8, c: Context) {
 
     // parameters are gone!
 
-    let c = Context {
+    let mut c = Context {
         rbp: prev_rbp,
         rsp: prev_rsp,
         rip: prev_rip,
@@ -62,8 +62,10 @@ pub extern "C" fn thing(rbp: *mut u8, c: Context) {
     println!("thing pivoted stack!");
 
     unsafe {
-        println!("right before activate()");
-        c.activate();
+        loop {
+            println!("right before activate()");
+            c = c.activate();
+        }
     }
 
     println!("thing was reactivated!");
@@ -232,6 +234,8 @@ mod x86_64_unix {
             :
                 "intel", "volatile"
             );
+
+            println!("prev_rsp = {:?}", prev_rsp);
 
             Context {
                 rbp: prev_rbp,

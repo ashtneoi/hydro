@@ -4,7 +4,9 @@ use hydrasync::{Context, thing};
 
 pub fn main() {
     unsafe {
-        let c = Context::call(thing);
-        c.activate();
+        let mut c = Context::call(thing);
+        loop {
+            c = c.activate();
+        }
     }
 }
