@@ -1,9 +1,47 @@
-#![feature(asm, naked_functions)]
+#![feature(asm)]
 
 use std::is_x86_feature_detected;
 
 // #[cfg(all(unix, target_arch = "x86_64"))]
- pub use self::x86_64_unix::Context;
+pub use self::x86_64_unix::Context;
+
+pub fn thing(rsp: *mut u8, c: Context) {
+    // pivot stack
+
+    unsafe {
+        asm!(
+            "
+                mov r8, $0
+                mov r9, $1
+                mov rcx, $2
+
+                mov rax, $3
+
+                mov rsp, rax
+                mov rbp, rax
+            "
+        :
+        :
+            "r"(c.rbp),
+            "r"(c.rsp),
+            "r"(c.rip),
+            "r"(rsp)
+        :
+            "r8", "r9", "rcx",
+            "rax"
+        :
+            "intel", "volatile"
+        );
+    }
+
+    println!("thing pivoted stack!");
+
+    unsafe {
+        c.activate();
+    }
+
+    println!("thing was reactivated!");
+}
 
 // TODO: do we also need to specify pointer size = 64?
 #[cfg(all(unix, target_arch = "x86_64"))]
@@ -16,10 +54,7 @@ mod x86_64_unix {
     }
 
     impl Context {
-        pub unsafe extern "C" fn call<F>(f: F) -> Context
-        where
-            F: Send + FnOnce(Context),
-        {
+        pub unsafe extern "C" fn call(f: fn(*mut u8, Context)) -> Context {
             // I think we need this for vstmxcsr.
             assert!(
                 is_x86_feature_detected!("avx")
@@ -29,6 +64,10 @@ mod x86_64_unix {
             // 2. save state
 
             let mut stack: Vec<u8> = vec![0; 1<<14];
+
+            let next_rsp =
+                (stack.as_mut_ptr() as usize & 0xFFFF_FFFF_FFFF_FFF0)
+                as *mut u8;
 
             let our_rbp: *mut u8;
             let our_rsp: *mut u8;
@@ -40,6 +79,8 @@ mod x86_64_unix {
             let prev_rbp: *mut u8;
             let prev_rsp: *mut u8;
             let prev_rip: *mut u8;
+
+            println!("main task about to call thing");
 
             asm!(
                 "
@@ -63,6 +104,7 @@ mod x86_64_unix {
             );
 
             f(
+                next_rsp,
                 Context {
                     rbp: our_rbp,
                     rsp: our_rsp,
@@ -95,6 +137,8 @@ mod x86_64_unix {
             :
                 "intel", "volatile"
             );
+
+            println!("main task was activated");
 
             Context {
                 rbp: prev_rbp,
