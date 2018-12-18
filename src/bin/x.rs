@@ -1,6 +1,6 @@
 #![feature(asm)]
 
-use hydrasync::{Context, thing};
+use hydro::{Context, thing};
 
 pub fn main() {
     unsafe {
