@@ -5,75 +5,78 @@ use std::is_x86_feature_detected;
 // #[cfg(all(unix, target_arch = "x86_64"))]
 pub use self::x86_64_unix::Context;
 
-pub extern "C" fn thing(rbp: *mut u8, c: Context) {
-    println!("about to pivot stack");
-
-    // pivot stack
-
-    let prev_rbp: *mut u8;
-    let prev_rsp: *mut u8;
-    let prev_rip: *mut u8;
-
-    unsafe {
-        asm!(
-            "
-                mov r8, $3
-                mov r9, $4
-                mov rcx, $5
-
-                mov rax, $6
-                and rax, 0xFFFFFFFFFFFFFFF0
-
-                mov rbp, rax
-                lea rsp, [rax - 0x400]
-
-                mov $0, r8
-                mov $1, r9
-                mov $2, rcx
-            "
-        :
-            "=r"(prev_rbp),
-            "=r"(prev_rsp),
-            "=r"(prev_rip)
-        :
-            "r"(c.rbp),
-            "r"(c.rsp),
-            "r"(c.rip),
-            "r"(rbp)
-        :
-            "r8", "r9", "rcx",
-            "rax",
-            "memory"
-        :
-            "intel", "volatile"
-        );
-    }
-
-    // parameters are gone!
-
-    let mut c = Context {
-        rbp: prev_rbp,
-        rsp: prev_rsp,
-        rip: prev_rip,
-    };
-
-    println!("thing pivoted stack!");
-
-    unsafe {
-        loop {
-            println!("right before activate()");
-            c = c.activate();
-        }
-    }
-
-    println!("thing was reactivated!");
-
-    unreachable!(); // lie
-}
 
 // TODO: do we also need to specify pointer size = 64?
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod x86_64_unix {
+    pub extern "C" fn thing(
+        rsp: *mut u8,
+        c: Context,
+        f: extern "C" fn(Context),
+    ) {
+        println!("about to pivot stack");
+
+        // pivot stack
+
+        let prev_rbp: *mut u8;
+        let prev_rsp: *mut u8;
+        let prev_rip: *mut u8;
+        let f2: extern "C" fn(Context);
+
+        unsafe {
+            asm!(
+                "
+                    mov r8, $4
+                    mov r9, $5
+                    mov rcx, $6
+                    mov r11, $7
+
+                    mov rax, $8
+                    and rax, 0xFFFFFFFFFFFFFFF0
+
+                    mov rbp, rax
+                    lea rsp, [rax - 0x400]
+
+                    mov $0, r8
+                    mov $1, r9
+                    mov $2, rcx
+                    mov $3, r11
+                "
+            :
+                "=r"(prev_rbp),
+                "=r"(prev_rsp),
+                "=r"(prev_rip)
+                "=r"(f2)
+            :
+                "r"(c.rbp),
+                "r"(c.rsp),
+                "r"(c.rip),
+                "r"(f),
+                "r"(rsp)
+            :
+                "r8", "r9", "rcx", "r11",
+                "rax",
+                "memory"
+            :
+                "intel", "volatile"
+            );
+        }
+
+        // parameters are gone!
+
+        let mut c = Context {
+            rbp: prev_rbp,
+            rsp: prev_rsp,
+            rip: prev_rip,
+        };
+
+        println!("thing pivoted stack!");
+
+        f2(c);
+
+        unreachable!(); // lie
+    }
+
     /// a jump destination
     pub struct Context {
         pub(crate) rbp: *mut u8,
@@ -82,7 +85,7 @@ mod x86_64_unix {
     }
 
     impl Context {
-        pub unsafe extern "C" fn call(f: extern "C" fn(*mut u8, Context))
+        pub unsafe extern "C" fn call(f: extern "C" fn(Context))
             -> Context
         {
             // I think we need this for vstmxcsr.
@@ -95,7 +98,7 @@ mod x86_64_unix {
 
             let mut stack: Vec<u8> = vec![0; 1<<14];
 
-            let next_rbp = (&mut stack[(1<<14)-16]) as *mut u8;
+            let next_rsp = (&mut stack[(1<<14)-16]) as *mut u8;
 
             let our_rbp: *mut u8;
             let our_rsp: *mut u8;
@@ -133,13 +136,14 @@ mod x86_64_unix {
 
             println!("here we go");
 
-            f(
-                next_rbp,
+            thing(
+                next_rsp,
                 Context {
                     rbp: our_rbp,
                     rsp: our_rsp,
                     rip: our_rip,
-                }
+                },
+                f,
             );
 
             asm!(
