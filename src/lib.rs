@@ -25,9 +25,7 @@ pub extern "C" fn thing(rbp: *mut u8, c: Context) {
                 and rax, 0xFFFFFFFFFFFFFFF0
 
                 mov rbp, rax
-                lea rsp, [rax - 128]
-                sub rsp, 128
-                sub rsp, 128
+                lea rsp, [rax - 0x400]
 
                 mov $0, r8
                 mov $1, r9
