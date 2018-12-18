@@ -114,18 +114,19 @@ mod x86_64_unix {
 
             asm!(
                 "
-                    mov $0, rbp
-                    mov $1, rsp
-                    lea $2, [rip+back_5ebe61aa363e6893]
+                    fstcw $0
+                    vstmxcsr $1
 
-                    vstmxcsr $4
+                    mov $2, rbp
+                    mov $3, rsp
+                    lea $4, [rip+back_5ebe61aa363e6893]
                 "
             :
+                "=*m"(&mut our_fcw),
+                "=*m"(&mut our_mxcsr),
                 "=r"(our_rbp),
                 "=r"(our_rsp),
-                "=r"(our_rip),
-                "=*m"(&mut our_fcw),
-                "=*m"(&mut our_mxcsr)
+                "=r"(our_rip)
             :
             :
             :
@@ -150,12 +151,13 @@ mod x86_64_unix {
                     mov $1, r13
                     mov $2, r14
 
+                    fldcw $3
                     vldmxcsr $4
                 "
             :
-                "=r"(prev_rbp),
-                "=r"(prev_rsp),
-                "=r"(prev_rip)
+                "=&r"(prev_rbp),
+                "=&r"(prev_rsp),
+                "=&r"(prev_rip)
             :
                 "*m"(&our_fcw),
                 "*m"(&our_mxcsr)
@@ -196,11 +198,12 @@ mod x86_64_unix {
             // 4. save activator state
             asm!(
                 "
+                    fstcw $3
+                    vstmxcsr $4
+
                     mov r8, $5
                     mov r9, $6
                     mov rcx, $7
-
-                    vstmxcsr $4
 
                     mov r12, rbp
                     mov r13, rsp
@@ -214,6 +217,7 @@ mod x86_64_unix {
                     mov $1, r13
                     mov $2, r14
 
+                    fldcw $3
                     vldmxcsr $4
                 "
             :
