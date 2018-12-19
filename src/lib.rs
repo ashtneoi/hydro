@@ -11,6 +11,7 @@ pub use self::x86_64_unix::Context;
 mod x86_64_unix {
     use std::panic::catch_unwind;
     use std::process::abort;
+    use std::ptr;
 
     // Why's this a separate function? I don't know.
     pub extern "C" fn thing(
@@ -187,7 +188,9 @@ mod x86_64_unix {
 
         /// self: context to activate
         /// return value: activator's context
-        pub unsafe extern "C" fn activate(self) -> Context {
+        pub unsafe extern "C" fn activate(self, done: bool)
+            -> Option<Context>
+        {
             println!("just inside activate()");
 
             let mut our_fcw: u16 = 0;
@@ -213,7 +216,12 @@ mod x86_64_unix {
 
                     mov r12, rbp
                     mov r13, rsp
+                    mov r14, 0
+
+                    cmp $8, 0  # :(
+                    jz no_rip
                     lea r14, [rip+back_b3c037d6b3912998]
+                no_rip:
 
                     mov rbp, r8
                     mov rsp, r9
@@ -235,7 +243,8 @@ mod x86_64_unix {
             :
                 "r"(self.rbp),
                 "r"(self.rsp),
-                "r"(self.rip)
+                "r"(self.rip),
+                "r"(done)
             :
                 "r8", "r9", "rcx", // prev
                 "r12", "r13", "r14", // ours
@@ -247,10 +256,14 @@ mod x86_64_unix {
 
             println!("prev_rsp = {:?}", prev_rsp);
 
-            Context {
-                rbp: prev_rbp,
-                rsp: prev_rsp,
-                rip: prev_rip,
+            if ptr::eq(prev_rip, 0 as *mut u8) {
+                None
+            } else {
+                Some(Context {
+                    rbp: prev_rbp,
+                    rsp: prev_rsp,
+                    rip: prev_rip,
+                })
             }
         }
     }
