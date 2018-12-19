@@ -9,6 +9,10 @@ pub use self::x86_64_unix::Context;
 // TODO: do we also need to specify pointer size = 64?
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod x86_64_unix {
+    use std::panic::catch_unwind;
+    use std::process::abort;
+
+    // Why's this a separate function? I don't know.
     pub extern "C" fn thing(
         rsp: *mut u8,
         c: Context,
@@ -34,6 +38,7 @@ mod x86_64_unix {
                     mov rax, $8
                     and rax, 0xFFFFFFFFFFFFFFF0
 
+                    # it's fine to clobber rbp since all inputs have been read
                     mov rbp, rax
                     lea rsp, [rax - 0x400]
 
@@ -72,9 +77,8 @@ mod x86_64_unix {
 
         println!("thing pivoted stack!");
 
-        f2(c);
-
-        unreachable!(); // lie
+        catch_unwind(|| f2(c));
+        abort();
     }
 
     /// a jump destination
