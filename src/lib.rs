@@ -28,6 +28,9 @@ mod x86_64_unix {
         let prev_rip: *mut u8;
         let f2: extern "C" fn(Context);
 
+        // FIXME: with no clobber constrait on rbp, we might have trashed a
+        // register var, but a clobber constraint would keep us from permanently
+        // changing it. wish there were an intrinsic to spill all regs.
         unsafe {
             asm!(
                 "
