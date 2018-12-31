@@ -48,10 +48,10 @@ mod platform {
             mov r11, rsi # new rip
             mov r12, rdx # new rsp
 
-            mov [rcx], rsp
-            mov [r8], rbp
             lea rax, [rip+pivot_resume]
-            mov [r9], rax
+            mov [rcx], rax
+            mov [r8], rsp
+            mov [r9], rbp
 
             mov rsp, r12
             # don't care about rbp
