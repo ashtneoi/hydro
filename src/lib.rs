@@ -14,7 +14,7 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
     ptr::write(*p as *mut T, val);
 }
 
-pub use crate::platform::{Task};
+pub use crate::platform::{next, start};
 
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod platform {
@@ -23,17 +23,29 @@ mod platform {
         push_raw,
     };
     use std::cell::Cell;
+    use std::ptr;
 
     thread_local! {
         static next_task: Cell<Option<Task>> = Cell::new(None);
     }
 
+    extern "sysv64" {
+        fn start_raw(
+            arg: *mut u8, // rdi
+            rip: *const u8, // rsi
+            rsp: *mut u8, // rdx
+            next_rip: &mut *const u8, // rcx
+            next_rsp: &mut *mut u8, // r8
+            next_rbp: &mut *mut u8, // r9
+        );
+    }
+
     // TODO: how do we require GNU `as`?
     global_asm!(r#"
         .intel_syntax
-        .global pivot
+        .global start_raw
 
-        pivot:
+        start_raw:
             push rbp
             push rbx
             push r12
@@ -48,7 +60,7 @@ mod platform {
             mov r11, rsi # new rip
             mov r12, rdx # new rsp
 
-            lea rax, [rip+pivot_resume]
+            lea rax, [rip+start_raw_back]
             mov [rcx], rax
             mov [r8], rsp
             mov [r9], rbp
@@ -58,7 +70,7 @@ mod platform {
             push 0  # for ABI
             jmp r11  # TODO: far?
 
-        pivot_resume:
+        start_raw_back:
             fldcw [rsp]
             pop rax
             vldmxcsr [rsp]
@@ -74,65 +86,128 @@ mod platform {
     "#);
 
     extern "sysv64" {
-        fn pivot(
-            arg: *mut u8, // rdi
-            rip: *const u8, // rsi
-            rsp: *mut u8, // rdx
+        fn next_raw(
+            rip: *const u8, // rdi
+            rsp: *mut u8, // rsi
+            rbp: *mut u8, // rdx
             next_rip: &mut *const u8, // rcx
             next_rsp: &mut *mut u8, // r8
             next_rbp: &mut *mut u8, // r9
         );
     }
 
+    global_asm!(r#"
+        .intel_syntax
+        .global next_raw
+
+        next_raw:
+            push rbp
+            push rbx
+            push r12
+            push r13
+            push r14
+            push r15
+            push 0
+            vstmxcsr [rsp]
+            push 0
+            fstcw [rsp]
+
+            mov r11, rdi // new rip
+            mov r12, rsi // new rsp
+            mov r13, rdx // new rbp
+
+            lea rax, [rip+next_raw_back]
+            mov [rcx], rax
+            mov [r8], rsp
+            mov [r9], rbp
+
+            mov rsp, r12
+            mov rbp, r13
+            jmp r11
+
+        next_raw_back:
+            fldcw [rsp]
+            pop rax
+            vldmxcsr [rsp]
+            pop rax
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop rbx
+            pop rbp
+
+            ret  # TODO: far?
+    "#);
+
     pub struct Task {
-        stack: Vec<u8>,
         rip: *const u8,
         rsp: *mut u8,
         rbp: *mut u8,
     }
 
-    impl Task {
-        pub fn start<T: Send>(
-            f: extern "sysv64" fn(&mut T) -> !,
-            arg: T,
-        ) {
-            assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+    pub fn start<T: Send>(
+        f: extern "sysv64" fn(&mut T) -> !,
+        arg: T,
+    ) -> Vec<u8> {
+        assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
-            let mut stack = Vec::with_capacity(1<<18);
-            unsafe { stack.set_len(1<<18); }
-            let mut rsp = stack.last_mut().unwrap() as *mut u8;
+        let mut stack = Vec::with_capacity(1<<18);
+        unsafe { stack.set_len(1<<18); }
+        let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-            unsafe { push_raw(&mut rsp, arg); }
-            let arg_ref = rsp;
+        unsafe { push_raw(&mut rsp, arg); }
+        let arg_ref = rsp;
 
-            rsp = align_mut_ptr_down(rsp, 16);
+        rsp = align_mut_ptr_down(rsp, 16);
 
-            let t = Task {
-                stack: stack,
-                rip: f as *const u8,
-                rsp: rsp as *mut u8,
-                rbp: rsp as *mut u8, // don't care
+        let t = Task {
+            rip: f as *const u8,
+            rsp: rsp as *mut u8,
+            rbp: rsp as *mut u8, // don't care
+        };
+
+        next_task.with(|nt_cell| {
+            let mut nt = Task {
+                rip: ptr::null(),
+                rsp: ptr::null_mut(),
+                rbp: ptr::null_mut(),
             };
+            unsafe {
+                start_raw(
+                    arg_ref,
+                    t.rip,
+                    t.rsp,
+                    &mut nt.rip,
+                    &mut nt.rsp,
+                    &mut nt.rbp,
+                );
+            }
+            nt_cell.set(Some(nt));
+        });
 
-            next_task.with(|nt| {
-                let mut nt2 = Task {
-                    stack: Vec::new(),
-                    rip: 0 as *const u8,
-                    rsp: 0 as *mut u8,
-                    rbp: 0 as *mut u8,
-                };
-                unsafe {
-                    pivot(
-                        arg_ref,
-                        t.rip,
-                        t.rsp,
-                        &mut nt2.rip,
-                        &mut nt2.rsp,
-                        &mut nt2.rbp,
-                    );
-                }
-                nt.set(Some(nt2));
-            });
-        }
+        return stack;
+    }
+
+    pub fn next() {
+        next_task.with(|nt_cell| {
+            let t = nt_cell.take().unwrap();
+            let mut nt = Task {
+                rip: ptr::null(),
+                rsp: ptr::null_mut(),
+                rbp: ptr::null_mut(),
+            };
+            unsafe {
+                next_raw(
+                    t.rip,
+                    t.rsp,
+                    t.rbp,
+                    &mut nt.rip,
+                    &mut nt.rsp,
+                    &mut nt.rbp,
+                );
+            }
+            nt_cell.set(Some(nt));
+        });
     }
 }
