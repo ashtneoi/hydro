@@ -50,7 +50,7 @@ mod platform {
 
             mov [rcx], rsp
             mov [r8], rbp
-            lea rax, [rip+pivot_resume_b3c037d6b3912998]
+            lea rax, [rip+pivot_resume]
             mov [r9], rax
 
             mov rsp, r12
@@ -58,7 +58,7 @@ mod platform {
             push 0  # for ABI
             jmp r11  # TODO: far?
 
-        pivot_resume_b3c037d6b3912998:
+        pivot_resume:
             fldcw [rsp]
             pop rax
             vldmxcsr [rsp]
@@ -74,7 +74,6 @@ mod platform {
     "#);
 
     extern "sysv64" {
-        #[no_mangle]
         fn pivot(
             arg: *mut u8, // rdi
             rip: *const u8, // rsi
