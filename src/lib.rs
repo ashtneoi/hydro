@@ -58,7 +58,7 @@ mod platform {
 
             mov rsp, r12
             # don't care about rbp
-            jmp r11
+            jmp r11  # TODO: far?
 
         pivot_resume_b3c037d6b3912998:
             fldcw [rsp]
@@ -72,10 +72,11 @@ mod platform {
             pop rbx
             pop rbp
 
-            ret # TODO: far?
+            ret  # TODO: far?
     "#);
 
     extern "sysv64" {
+        #[no_mangle]
         fn pivot(
             arg: *mut u8, // rdi
             rip: *const u8, // rsi
