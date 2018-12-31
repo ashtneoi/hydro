@@ -1,11 +1,26 @@
 #![feature(global_asm)]
 
 use std::is_x86_feature_detected;
+use std::mem::size_of;
+use std::ptr;
 
-// pub use platform::{};
+pub(crate) fn align_mut_ptr_down<T>(p: *mut T, alignment: usize) -> *mut T {
+    ((p as usize) & !((1<<alignment) - 1)) as *mut T
+}
+
+pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
+    *p = ((*p as usize) - size_of::<T>()) as *mut u8;
+    ptr::write(*p as *mut T, val);
+}
+
+pub use crate::platform::{Task};
 
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod platform {
+    use crate::{
+        align_mut_ptr_down,
+        push_raw,
+    };
     use std::cell::Cell;
 
     thread_local! {
@@ -21,11 +36,13 @@ mod platform {
     extern "sysv64" {
         fn pivot(
             rsp: *mut u8,
-            f: extern "sysv64" fn(*const u8) -> !,
+            f: extern "sysv64" fn(
+                &mut u8, // argument
+            ) -> !,
         );
     }
 
-    struct Task {
+    pub struct Task {
         stack: Vec<u8>,
         rip: *const u8,
         rsp: *mut u8,
@@ -33,14 +50,14 @@ mod platform {
     }
 
     impl Task {
-        fn start<T: Send>(
+        pub fn start<T: Send>(
             f: extern "sysv64" fn(*const u8, *const u8) -> !,
             arg: T,
         ) {
-            let mut stack = vec![0; 1<<18];
-            let rsp_unaligned = stack.last_mut().unwrap() as *mut u8 as usize;
-            // align to 512 bits
-            let rsp = rsp_unaligned & 0xFFFF_FFFF_FFFF_FE00;
+            let mut stack = Vec::with_capacity(1<<18);
+            unsafe { stack.set_len(1<<18); }
+            let mut rsp = stack.last_mut().unwrap() as *mut u8;
+            rsp = align_mut_ptr_down(rsp, 64);
             let t = Task {
                 stack: stack,
                 rip: f as *const u8,
