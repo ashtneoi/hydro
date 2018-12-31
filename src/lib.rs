@@ -22,21 +22,17 @@ mod platform {
         align_mut_ptr_down,
         push_raw,
     };
-    use std::cell::Cell;
+    use std::cell::RefCell;
     use std::ptr;
-
-    thread_local! {
-        static next_task: Cell<Option<Task>> = Cell::new(None);
-    }
 
     extern "sysv64" {
         fn start_raw(
             arg: *mut u8, // rdi
             rip: *const u8, // rsi
             rsp: *mut u8, // rdx
-            next_rip: &mut *const u8, // rcx
-            next_rsp: &mut *mut u8, // r8
-            next_rbp: &mut *mut u8, // r9
+            next_rip: *mut *const u8, // rcx
+            next_rsp: *mut *mut u8, // r8
+            next_rbp: *mut *mut u8, // r9
         );
     }
 
@@ -67,7 +63,7 @@ mod platform {
 
             mov rsp, r12
             # don't care about rbp
-            push 0  # for ABI
+            push 0  # "return value"
             jmp r11  # TODO: far?
 
         start_raw_back:
@@ -90,9 +86,9 @@ mod platform {
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
-            next_rip: &mut *const u8, // rcx
-            next_rsp: &mut *mut u8, // r8
-            next_rbp: &mut *mut u8, // r9
+            next_rip: *mut *const u8, // rcx
+            next_rsp: *mut *mut u8, // r8
+            next_rbp: *mut *mut u8, // r9
         );
     }
 
@@ -140,10 +136,25 @@ mod platform {
             ret  # TODO: far?
     "#);
 
+    #[derive(Clone, Copy)]
     pub struct Task {
         rip: *const u8,
         rsp: *mut u8,
         rbp: *mut u8,
+    }
+
+    impl Default for Task {
+        fn default() -> Self {
+            return Task {
+                rip: ptr::null(),
+                rsp: ptr::null_mut(),
+                rbp: ptr::null_mut(),
+            }
+        }
+    }
+
+    thread_local! {
+        static next_task: RefCell<Task> = RefCell::new(Default::default());
     }
 
     pub fn start<T: Send>(
@@ -167,47 +178,51 @@ mod platform {
             rbp: rsp as *mut u8, // don't care
         };
 
-        next_task.with(|nt_cell| {
-            let mut nt = Task {
-                rip: ptr::null(),
-                rsp: ptr::null_mut(),
-                rbp: ptr::null_mut(),
+        next_task.with(|nt_rc| {
+            let (nt_rip, nt_rsp, nt_rbp) = {
+                let mut nt = nt_rc.borrow_mut();
+                (
+                    &mut nt.rip as *mut *const u8,
+                    &mut nt.rsp as *mut *mut u8,
+                    &mut nt.rbp as *mut *mut u8,
+                )
             };
             unsafe {
                 start_raw(
                     arg_ref,
                     t.rip,
                     t.rsp,
-                    &mut nt.rip,
-                    &mut nt.rsp,
-                    &mut nt.rbp,
+                    nt_rip,
+                    nt_rsp,
+                    nt_rbp,
                 );
             }
-            nt_cell.set(Some(nt));
         });
 
         return stack;
     }
 
     pub fn next() {
-        next_task.with(|nt_cell| {
-            let t = nt_cell.take().unwrap();
-            let mut nt = Task {
-                rip: ptr::null(),
-                rsp: ptr::null_mut(),
-                rbp: ptr::null_mut(),
+        next_task.with(|nt_rc| {
+            let t = *nt_rc.borrow();
+            let (nt_rip, nt_rsp, nt_rbp) = {
+                let mut nt = nt_rc.borrow_mut();
+                (
+                    &mut nt.rip as *mut *const u8,
+                    &mut nt.rsp as *mut *mut u8,
+                    &mut nt.rbp as *mut *mut u8,
+                )
             };
             unsafe {
                 next_raw(
                     t.rip,
                     t.rsp,
                     t.rbp,
-                    &mut nt.rip,
-                    &mut nt.rsp,
-                    &mut nt.rbp,
+                    nt_rip,
+                    nt_rsp,
+                    nt_rbp,
                 );
             }
-            nt_cell.set(Some(nt));
         });
     }
 }
