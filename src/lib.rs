@@ -29,12 +29,14 @@ mod platform {
         static next_task: Cell<Option<Task>> = Cell::new(None);
     }
 
+    // TODO: how do we require GNU `as`?
     global_asm!(r#"
         .intel_syntax
 
         pivot:
-            push rbx
+            # odd number of qwords for ABI
             push rbp
+            push rbx
             push r12
             push r13
             push r14
@@ -43,10 +45,34 @@ mod platform {
             vstmxcsr [rsp]
             push 0
             fstcw [rsp]
+            push 0
+            # odd number of qwords for ABI
 
-            mov r12, rsi # new rip
-            mov r13, rdx # new rsp
+            mov r11, rsi # new rip
+            mov r12, rdx # new rsp
 
+            mov [rcx], rsp
+            mov [r8], rbp
+            lea rax, [rip+pivot_resume_b3c037d6b3912998]
+            mov [r9], rax
+
+            mov rsp, r12
+            # don't care about rbp
+            jmp r11
+
+        pivot_resume_b3c037d6b3912998:
+            fldcw [rsp]
+            pop rax
+            vldmxcsr [rsp]
+            pop rax
+            pop r15
+            pop r14
+            pop r13
+            pop r12
+            pop rbx
+            pop rbp
+
+            ret # TODO: far?
     "#);
 
     extern "sysv64" {
@@ -72,6 +98,8 @@ mod platform {
             f: extern "sysv64" fn(&mut T) -> !,
             arg: T,
         ) {
+            assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+
             let mut stack = Vec::with_capacity(1<<18);
             unsafe { stack.set_len(1<<18); }
             let mut rsp = stack.last_mut().unwrap() as *mut u8;
