@@ -1,5 +1,5 @@
 [package]
-name = "hydrasync"
+name = "hydro"
 version = "0.1.0"
 authors = ["ashtneoi <ashtneoi@gmail.com>"]
 edition = "2018"
