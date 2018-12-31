@@ -1,6 +1,5 @@
 #![feature(global_asm)]
 
-use std::is_x86_feature_detected;
 use std::mem::size_of;
 use std::ptr;
 
@@ -32,9 +31,9 @@ mod platform {
     // TODO: how do we require GNU `as`?
     global_asm!(r#"
         .intel_syntax
+        .global pivot
 
         pivot:
-            # odd number of qwords for ABI
             push rbp
             push rbx
             push r12
@@ -45,8 +44,6 @@ mod platform {
             vstmxcsr [rsp]
             push 0
             fstcw [rsp]
-            push 0
-            # odd number of qwords for ABI
 
             mov r11, rsi # new rip
             mov r12, rdx # new rsp
@@ -58,6 +55,7 @@ mod platform {
 
             mov rsp, r12
             # don't care about rbp
+            push 0  # for ABI
             jmp r11  # TODO: far?
 
         pivot_resume_b3c037d6b3912998:
@@ -118,7 +116,12 @@ mod platform {
             };
 
             next_task.with(|nt| {
-                let mut nt2 = nt.take().unwrap();
+                let mut nt2 = Task {
+                    stack: Vec::new(),
+                    rip: 0 as *const u8,
+                    rsp: 0 as *mut u8,
+                    rbp: 0 as *mut u8,
+                };
                 unsafe {
                     pivot(
                         arg_ref,
