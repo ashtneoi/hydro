@@ -1,5 +1,8 @@
 #![feature(global_asm)]
 
+#[macro_use]
+extern crate lazy_static;
+
 use std::mem::size_of;
 use std::ptr;
 
@@ -28,9 +31,10 @@ mod platform {
         align_mut_ptr_down,
         push_raw,
     };
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use std::ptr;
+    use std::sync::Mutex;
 
     extern "sysv64" {
         fn start_inner(
@@ -176,6 +180,7 @@ mod platform {
     }
 
     impl PollingRoundRobinPool {
+        // TODO: This is iffy.
         pub fn activate_new() {
             let mut tasks = VecDeque::with_capacity(32);
             tasks.push_back(Task {
@@ -183,10 +188,15 @@ mod platform {
                 ctx: None,
             });
 
-            active_pool.with(|ap| {
-                ap.replace(
-                    Some(Box::new(Self { tasks }))
-                );
+            let ap = active_pool.with(|ap| {
+                let aps_locked = active_pools.lock().unwrap();
+                // vv FIXME: this shouldn't need to be mut
+                let mut aps = aps_locked.borrow_mut();
+                if aps.is_none() {
+                    *aps = Some(Vec::with_capacity(32));
+                }
+                aps.as_mut().unwrap().push(Box::new(Self { tasks }));
+                ap.set(Some(aps.as_mut().unwrap().len() - 1))
             });
         }
     }
@@ -285,8 +295,13 @@ mod platform {
              *});
              */
 
+    lazy_static! {
+        static ref active_pools: Mutex<RefCell<Option<Vec<Box<dyn Pool + Send>>>>> =
+            Mutex::new(RefCell::new(None));
+    }
+
     thread_local! {
-        static active_pool: RefCell<Option<Box<dyn Pool>>> = RefCell::new(None);
+        static active_pool: Cell<Option<usize>> = Cell::new(None);
     }
 
     pub fn start<T: Send>(
@@ -316,19 +331,14 @@ mod platform {
             }),
         };
 
-        active_pool.with(|ap| {
-            if let Some(ref mut ap) = *ap.borrow_mut() {
-                ap.add(t);
-                ap.next();
-            } else { panic!(); }
-        });
+        let ap = active_pool.with(|ap| ap.get().unwrap());
+        let aps = &mut active_pools.lock().unwrap().borrow_mut().unwrap();
+        aps[ap].add(t);
+        aps[ap].next();
     }
 
     pub fn next() {
-        active_pool.with(|ap| {
-            if let Some(ref mut ap) = *ap.borrow_mut() {
-                ap.next();
-            } else { panic!(); }
-        });
+        let ap = active_pool.with(|ap| ap.get().unwrap());
+        active_pools.lock().unwrap().borrow_mut().unwrap()[ap].next();
     }
 }
