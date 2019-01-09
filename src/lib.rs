@@ -14,7 +14,13 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
     ptr::write(*p as *mut T, val);
 }
 
-pub use crate::platform::{next, Pool, start, Task};
+pub use crate::platform::{
+    next,
+    PollingRoundRobinPool,
+    Pool,
+    start,
+    Task,
+};
 
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod platform {
@@ -160,6 +166,7 @@ mod platform {
     }
 
     pub trait Pool {
+        fn add(&mut self, t: Task);
         fn next(&mut self);
         fn remove(&mut self);
     }
@@ -168,7 +175,24 @@ mod platform {
         tasks: VecDeque<Task>, // back = current, front = next
     }
 
+    impl PollingRoundRobinPool {
+        pub fn activate_new() {
+            let mut tasks = VecDeque::with_capacity(32);
+            tasks.push_back(Task {
+                stack: Vec::new(),
+                ctx: None,
+            });
+
+            active_pool.with(|ap| {
+                ap.replace(
+                    Some(Box::new(Self { tasks }))
+                );
+            });
+        }
+    }
+
     impl Pool for PollingRoundRobinPool {
+        // back is active, front is next
         fn next(&mut self) {
             if self.tasks.len() == 1 {
                 return;
@@ -180,10 +204,15 @@ mod platform {
                 self.tasks.push_back(t);
             }
 
-            let next_ctx = self.tasks.back().unwrap().ctx.unwrap();
+            let next_task = self.tasks.back().unwrap();
+            let next_ctx = next_task.ctx.unwrap();
             unsafe {
                 self.tasks[self.tasks.len()-2].ctx.unwrap().pivot(&next_ctx);
             }
+        }
+
+        fn add(&mut self, t: Task) {
+            self.tasks.push_front(t);
         }
 
         fn remove(&mut self) {
@@ -289,6 +318,8 @@ mod platform {
 
         active_pool.with(|ap| {
             if let Some(ref mut ap) = *ap.borrow_mut() {
+                ap.add(t);
+                ap.next();
             } else { panic!(); }
         });
     }
@@ -296,6 +327,7 @@ mod platform {
     pub fn next() {
         active_pool.with(|ap| {
             if let Some(ref mut ap) = *ap.borrow_mut() {
+                ap.next();
             } else { panic!(); }
         });
     }

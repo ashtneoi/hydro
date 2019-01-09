@@ -1,6 +1,6 @@
 extern crate hydro;
 
-use hydro::{next, start};
+use hydro::{next, PollingRoundRobinPool, start};
 use std::process::abort;
 
 extern "sysv64" fn go(arg: &mut u32) -> ! {
@@ -11,6 +11,7 @@ extern "sysv64" fn go(arg: &mut u32) -> ! {
 }
 
 fn main() {
+    PollingRoundRobinPool::activate_new();
     let v = start(go, 82);
     let mut a = 12.0;
     if true {
