@@ -129,11 +129,15 @@ mod platform {
     "#);
 
     #[derive(Clone, Copy)]
-    pub struct Context {
+    struct Context {
         rip: *const u8,
         rsp: *mut u8,
         rbp: *mut u8,
     }
+
+    // This is okay because Context and active_pools are private and we never
+    // ever use the same Context in multiple threads.
+    unsafe impl Send for Context { }
 
     impl Context {
         pub(crate) fn null() -> Context {
@@ -169,7 +173,8 @@ mod platform {
         ctx: Option<Context>,
     }
 
-    pub trait Pool {
+    // We need Send here because we're storing it in a static.
+    pub trait Pool: Send {
         fn add(&mut self, t: Task);
         fn next(&mut self);
         fn remove(&mut self);
@@ -248,60 +253,19 @@ mod platform {
                 );
             }
         }
-
-/*
- *        pub fn add<T: Send>(
- *            &mut self,
- *            f: extern "sysv64" fn(&mut T) -> !,
- *            arg: T,
- *        ) {
- *            let mut t = Task {
- *                stack: Vec::with_capacity(1<<18),
- *                ctx: Some(Context {
- *                    rip: f as *const u8,
- *                    rsp: ptr::null_mut(),
- *                    rbp: ptr::null_mut(),
- *                }),
- *            };
- *
- *            unsafe { t.stack.set_len(1<<18); }
- *
- *            if let Some(ref mut ctx) = t.ctx {
- *                ctx.rsp = t.stack.last_mut().unwrap() as *mut u8;
- *
- *                unsafe { push_raw(&mut ctx.rsp, arg); }
- *                let arg_ref = ctx.rsp;
- *
- *                ctx.rsp = align_mut_ptr_down(ctx.rsp, 16);
- *                ctx.rsp -= 8;
- *                unsafe { ptr::write_bytes(ctx.rsp, 0, 8); }
- *            } else { panic!(); }
- *
- *            self.tasks.insert(t);
- *        }
- */
     }
 
-            /*
-             *next_task.with(|rc_nt| {
-             *    let (nt_rip, nt_rsp, nt_rbp) = {
-             *        let mut nt = nt_rc.borrow_mut();
-             *        (
-             *            &mut nt.rip as *mut *const u8,
-             *            &mut nt.rsp as *mut *mut u8,
-             *            &mut nt.rbp as *mut *mut u8,
-             *        )
-             *    };
-             *});
-             */
-
     lazy_static! {
-        static ref active_pools: Mutex<RefCell<Option<Vec<Box<dyn Pool + Send>>>>> =
+        static ref active_pools: Mutex<RefCell<Option<Vec<Box<dyn Pool>>>>> =
             Mutex::new(RefCell::new(None));
     }
 
     thread_local! {
         static active_pool: Cell<Option<usize>> = Cell::new(None);
+    }
+
+    fn with_active_pool<F: FnOnce>(f: F) {
+        let ap = active_pool.with(|ap| ap.get().unwrap());
     }
 
     pub fn start<T: Send>(
@@ -332,7 +296,9 @@ mod platform {
         };
 
         let ap = active_pool.with(|ap| ap.get().unwrap());
-        let aps = &mut active_pools.lock().unwrap().borrow_mut().unwrap();
+        let aps_locked = active_pools.lock().unwrap();
+        let mut aps_borrowed = aps_locked.borrow_mut();
+        let aps = &mut aps_borrowed.as_mut().unwrap();
         aps[ap].add(t);
         aps[ap].next();
     }
