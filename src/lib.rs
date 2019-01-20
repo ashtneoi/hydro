@@ -19,8 +19,6 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
 
 pub use crate::platform::{
     next,
-    PollingRoundRobinPool,
-    Pool,
     start,
     Task,
 };
@@ -135,10 +133,6 @@ mod platform {
         rbp: *mut u8,
     }
 
-    // This is okay because Context and active_pools are private and we never
-    // ever use the same Context in multiple threads.
-    unsafe impl Send for Context { }
-
     impl Context {
         pub(crate) fn null() -> Context {
             Context {
@@ -173,99 +167,39 @@ mod platform {
         ctx: Option<Context>,
     }
 
-    // We need Send here because we're storing it in a static.
-    pub trait Pool: Send {
-        fn add(&mut self, t: Task);
-        fn next(&mut self);
-        fn remove(&mut self);
-    }
-
-    pub struct PollingRoundRobinPool {
-        tasks: VecDeque<Task>, // back = current, front = next
-    }
-
-    impl PollingRoundRobinPool {
-        // TODO: This is iffy.
-        pub fn activate_new() {
-            let mut tasks = VecDeque::with_capacity(32);
-            tasks.push_back(Task {
-                stack: Vec::new(),
-                ctx: None,
-            });
-
-            let ap = active_pool.with(|ap| {
-                let aps_locked = active_pools.lock().unwrap();
-                // vv FIXME: this shouldn't need to be mut
-                let mut aps = aps_locked.borrow_mut();
-                if aps.is_none() {
-                    *aps = Some(Vec::with_capacity(32));
-                }
-                aps.as_mut().unwrap().push(Box::new(Self { tasks }));
-                ap.set(Some(aps.as_mut().unwrap().len() - 1))
-            });
-        }
-    }
-
-    impl Pool for PollingRoundRobinPool {
-        // back is active, front is next
-        fn next(&mut self) {
-            if self.tasks.len() == 1 {
-                return;
-            }
-            assert_ne!(self.tasks.len(), 0);
-
-            {
-                let t = self.tasks.pop_front().unwrap();
-                self.tasks.push_back(t);
-            }
-
-            let next_task = self.tasks.back().unwrap();
-            let next_ctx = next_task.ctx.unwrap();
-            unsafe {
-                self.tasks[self.tasks.len()-2].ctx.unwrap().pivot(&next_ctx);
-            }
-        }
-
-        fn add(&mut self, t: Task) {
-            self.tasks.push_front(t);
-        }
-
-        fn remove(&mut self) {
-            assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
-            if self.tasks.back().unwrap().stack.len() == 0 {
-                panic!("can't remove main task");
-            }
-            if self.tasks.len() == 1 { // TODO: error, not panic
-                panic!("can't remove only task");
-            }
-            assert_ne!(self.tasks.len(), 0);
-
-            let mut active = self.tasks.pop_back().unwrap();
-
-            {
-                let t = self.tasks.pop_front().unwrap();
-                self.tasks.push_back(t);
-            }
-
-            unsafe {
-                active.ctx.unwrap().pivot(
-                    &self.tasks.back().unwrap().ctx.unwrap()
-                );
-            }
-        }
-    }
-
-    lazy_static! {
-        static ref active_pools: Mutex<RefCell<Option<Vec<Box<dyn Pool>>>>> =
-            Mutex::new(RefCell::new(None));
-    }
+/*
+ *    impl Pool for PollingRoundRobinPool {
+ *        fn remove(&mut self) {
+ *            assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+ *            if self.tasks.back().unwrap().stack.len() == 0 {
+ *                panic!("can't remove main task");
+ *            }
+ *            if self.tasks.len() == 1 { // TODO: error, not panic
+ *                panic!("can't remove only task");
+ *            }
+ *            assert_ne!(self.tasks.len(), 0);
+ *
+ *            let mut active = self.tasks.pop_back().unwrap();
+ *
+ *            {
+ *                let t = self.tasks.pop_front().unwrap();
+ *                self.tasks.push_back(t);
+ *            }
+ *
+ *            unsafe {
+ *                active.ctx.unwrap().pivot(
+ *                    &self.tasks.back().unwrap().ctx.unwrap()
+ *                );
+ *            }
+ *        }
+ *    }
+ */
 
     thread_local! {
-        static active_pool: Cell<Option<usize>> = Cell::new(None);
-    }
-
-    fn with_active_pool<F: FnOnce>(f: F) {
-        let ap = active_pool.with(|ap| ap.get().unwrap());
+        // back = active, front = next
+        static tasks: RefCell<VecDeque<Task>> = RefCell::new(
+            vec![Task { stack: vec![], ctx: None }].into()
+        );
     }
 
     pub fn start<T: Send>(
@@ -295,16 +229,49 @@ mod platform {
             }),
         };
 
-        let ap = active_pool.with(|ap| ap.get().unwrap());
-        let aps_locked = active_pools.lock().unwrap();
-        let mut aps_borrowed = aps_locked.borrow_mut();
-        let aps = &mut aps_borrowed.as_mut().unwrap();
-        aps[ap].add(t);
-        aps[ap].next();
+        // back = active, front = next
+
+        tasks.with(|tt| {
+            let tt = tt.borrow_mut();
+            tt.push_front(t);
+        });
+        next();
     }
 
     pub fn next() {
-        let ap = active_pool.with(|ap| ap.get().unwrap());
-        active_pools.lock().unwrap().borrow_mut().unwrap()[ap].next();
+        // back = active, front = next
+
+        let (active_ctx, next_ctx) = tasks.with(|tt| {
+            let tt = tt.borrow_mut();
+
+            if tt.len() == 1 {
+                return;
+            }
+            assert_ne!(tt.len(), 0);
+
+            {
+                let t = tt.pop_front().unwrap();
+                tt.push_back(t);
+            }
+
+            let next_ctx = {
+                let next_task = tt.back_mut().unwrap();
+                next_task.ctx.take()
+            };
+
+            let active_ctx = unsafe {
+                (
+                    tt[tt.len()-2].ctx.as_mut().unwrap()
+                    as *mut Context
+                ).as_mut().unwrap()
+            };
+
+            // We stole active_ctx, so it *must not* survive past the end of
+            // next(), and we *must not* modify the tasks vec.
+
+            (active_ctx, next_ctx)
+        });
+
+        active_ctx.pivot(&next_ctx);
     }
 }
