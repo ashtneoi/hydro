@@ -260,6 +260,7 @@ mod platform {
             };
 
             let active_ctx_i = tt.len() - 2;
+            tt[active_ctx_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
                 (
                     tt[active_ctx_i].ctx.as_mut().unwrap()
