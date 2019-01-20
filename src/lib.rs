@@ -232,7 +232,7 @@ mod platform {
         // back = active, front = next
 
         tasks.with(|tt| {
-            let tt = tt.borrow_mut();
+            let mut tt = tt.borrow_mut();
             tt.push_front(t);
         });
         next();
@@ -241,11 +241,11 @@ mod platform {
     pub fn next() {
         // back = active, front = next
 
-        let (active_ctx, next_ctx) = tasks.with(|tt| {
-            let tt = tt.borrow_mut();
+        let ctxs = tasks.with(|tt| {
+            let mut tt = tt.borrow_mut();
 
             if tt.len() == 1 {
-                return;
+                return None;
             }
             assert_ne!(tt.len(), 0);
 
@@ -256,12 +256,13 @@ mod platform {
 
             let next_ctx = {
                 let next_task = tt.back_mut().unwrap();
-                next_task.ctx.take()
+                next_task.ctx.take().unwrap()
             };
 
+            let active_ctx_i = tt.len() - 2;
             let active_ctx = unsafe {
                 (
-                    tt[tt.len()-2].ctx.as_mut().unwrap()
+                    tt[active_ctx_i].ctx.as_mut().unwrap()
                     as *mut Context
                 ).as_mut().unwrap()
             };
@@ -269,9 +270,13 @@ mod platform {
             // We stole active_ctx, so it *must not* survive past the end of
             // next(), and we *must not* modify the tasks vec.
 
-            (active_ctx, next_ctx)
+            Some((active_ctx, next_ctx))
         });
 
-        active_ctx.pivot(&next_ctx);
+        if let Some((active_ctx, next_ctx)) = ctxs {
+            unsafe {
+                active_ctx.pivot(&next_ctx);
+            }
+        }
     }
 }
