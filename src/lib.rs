@@ -36,18 +36,55 @@ mod platform {
     use std::sync::Mutex;
 
     extern "sysv64" {
+        fn start_inner(
+            rip: *const u8, // rdi
+            rsp: *mut u8, // rsi
+            rbp: *mut u8, // rdx
+            save_ctx: *mut u8, // rcx
+            arg: *mut u8, // r8
+        );
+
         fn pivot_inner(
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
-            save_ctx: *mut (), // rcx
+            save_ctx: *mut u8, // rcx
         );
     }
 
     global_asm!(r#"
         .intel_syntax
+        .global start_inner
         .global pivot_inner
-        .global remove_inner
+
+        start_inner:
+            push rbp
+            push rbx
+            push r12
+            push r13
+            push r14
+            push r15
+            push 0
+            vstmxcsr [rsp]
+            push 0
+            fstcw [rsp]
+
+            mov r11, rdi // new rip
+            mov r12, rsi // new rsp
+            mov r13, rdx // new rbp
+
+            lea rax, [rip + start_inner_back]
+            mov [rcx], rax
+            mov [rcx + 16], rsp
+            mov [rcx + 32], rbp
+
+            mov rsp, r12
+            mov rbp, r13
+            mov rdi, r8 // arg
+            jmp r11
+
+        start_inner_back:
+            ud2
 
         pivot_inner:
             push rbp
@@ -61,17 +98,18 @@ mod platform {
             push 0
             fstcw [rsp]
 
+            mov r11, rdi // new rip
             mov r12, rsi // new rsp
             mov r13, rdx // new rbp
 
-            lea rax, [rip+pivot_inner_back]
+            lea rax, [rip + pivot_inner_back]
             mov [rcx], rax
             mov [rcx + 16], rsp
             mov [rcx + 32], rbp
 
             mov rsp, r12
             mov rbp, r13
-            jmp rdi
+            jmp r11
 
         pivot_inner_back:
             fldcw [rsp]
@@ -105,16 +143,32 @@ mod platform {
             }
         }
 
-        pub(crate) unsafe fn pivot(&mut self, next: &Context, remove: bool) {
+        // TODO: bit weird to go from start() to pivot() to start_inner()
+        pub(crate) unsafe fn pivot(
+            &mut self,
+            next: &Context,
+            arg: Option<*mut u8>,
+            remove: bool,
+        ) {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
             unsafe {
-                pivot_inner(
-                    next.rip,
-                    next.rsp,
-                    next.rbp,
-                    self as *mut Context as *mut (), // I guess
-                );
+                if let Some(arg) = arg {
+                    start_inner(
+                        next.rip,
+                        next.rsp,
+                        next.rbp,
+                        self as *mut Context as *mut u8, // I guess
+                        arg,
+                    );
+                } else {
+                    pivot_inner(
+                        next.rip,
+                        next.rsp,
+                        next.rbp,
+                        self as *mut Context as *mut u8, // I guess
+                    );
+                }
             }
         }
     }
@@ -164,10 +218,10 @@ mod platform {
             let mut tt = tt.borrow_mut();
             tt.push_front(t);
         });
-        next();
+        pivot(Some(arg_ref), false);
     }
 
-    fn pivot(remove: bool) {
+    fn pivot(arg: Option<*mut u8>, remove: bool) {
         // back = active, front = next
 
         let ctxs = tasks.with(|tt| {
@@ -205,16 +259,18 @@ mod platform {
 
         if let Some((active_ctx, next_ctx)) = ctxs {
             unsafe {
-                active_ctx.pivot(&next_ctx, remove);
+                active_ctx.pivot(&next_ctx, arg, remove);
             }
         }
+
+        // TODO: And then deal with activater's `remove`.
     }
 
     pub fn next() {
-        pivot(false)
+        pivot(None, false)
     }
 
     pub fn remove() {
-        pivot(true)
+        pivot(None, true)
     }
 }
