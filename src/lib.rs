@@ -3,6 +3,11 @@
 use std::mem::size_of;
 use std::ptr;
 
+/// *extremely* unsafe
+pub(crate) unsafe fn steal_mut<'a, T>(x: &mut T) -> &'a mut T {
+    &mut *(x as *mut T)
+}
+
 pub(crate) fn align_mut_ptr_down<T>(p: *mut T, alignment: usize) -> *mut T {
     ((p as usize) & !((1<<alignment) - 1)) as *mut T
 }
@@ -26,6 +31,7 @@ mod platform {
     use crate::{
         align_mut_ptr_down,
         push_raw,
+        steal_mut,
     };
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -149,8 +155,6 @@ mod platform {
         ) {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
-            println!("next: {:?}", next);
-
             if let Some(arg) = arg {
                 start_inner(
                     next.rip,
@@ -167,8 +171,6 @@ mod platform {
                     self as *mut Context as *mut u8, // I guess
                 );
             }
-
-            println!("saved: {:?}", self);
         }
     }
 
@@ -179,7 +181,7 @@ mod platform {
 
     impl fmt::Debug for Task {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Task([{}], {:?})", self.stack.len(), self.ctx)
+            write!(f, "Task({}, {:?})", self.stack.len(), self.ctx)
         }
     }
 
@@ -194,6 +196,8 @@ mod platform {
         f: extern "sysv64" fn(&mut T) -> !,
         arg: T,
     ) {
+        println!("start ((");
+
         assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
         let mut stack = Vec::with_capacity(1<<18);
@@ -221,17 +225,24 @@ mod platform {
 
         TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
+            println!("tt = {:?}", tt);
             tt.push_front(t);
             println!("tt = {:?}", tt);
         });
         pivot(Some(arg_ref), false);
+
+        println!("start ))");
     }
 
     fn pivot(arg: Option<*mut u8>, remove: bool) {
         // back = active, front = next
 
+        println!("pivot ((");
+
         let ctxs = TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
+
+            println!("tt = {:?}", tt);
 
             if tt.len() == 1 {
                 return None;
@@ -249,14 +260,12 @@ mod platform {
             };
 
             println!("tt = {:?}", tt);
+            println!("next = {:?}", next_ctx);
 
             let active_ctx_i = tt.len() - 2;
             tt[active_ctx_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
-                (
-                    tt[active_ctx_i].ctx.as_mut().unwrap()
-                    as *mut Context
-                ).as_mut().unwrap()
+                steal_mut(tt[active_ctx_i].ctx.as_mut().unwrap())
             };
 
             // We stole active_ctx, so it *must not* survive past the end of
@@ -274,6 +283,8 @@ mod platform {
 
             // TODO: And then deal with activator's `remove`.
         }
+
+        println!("pivot ))");
     }
 
     pub fn next() {
