@@ -44,10 +44,10 @@ mod platform {
         fn start_inner(
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
-            rbp: *mut u8, // rdx
-            save_ctx: *mut u8, // rcx
-            done: bool, // r8
-            arg: *mut u8, // r9
+            save_ctx: *mut u8, // rdx
+            done: bool, // rcx
+            arg: *mut u8, // r8
+            arg_box: *mut u8, // r9
         ) -> bool;
 
         fn pivot_inner(
@@ -78,19 +78,18 @@ mod platform {
 
             mov r11, rdi # new rip
             mov r12, rsi # new rsp
-            mov r13, rdx # new rbp
 
             lea rax, [rip + pivot_inner_back]
-            mov [rcx], rax
-            mov [rcx + 8], rsp
-            mov [rcx + 16], rbp
+            mov [rdx], rax
+            mov [rdx + 8], rsp
+            mov [rdx + 16], rbp
 
             mov rsp, r12
-            mov rbp, r13
-            mov rdi, r9 # arg
-            push rdi # conveniently needed to align stack
+            # rbp doesn't matter
+            mov rdi, r8 # arg
+            push r9 # conveniently needed to align stack
             call r11
-            pop rdi
+            pop rdi # arg_box
             jmp done
             ud2
 
@@ -156,19 +155,19 @@ mod platform {
         pub(crate) unsafe fn pivot(
             &mut self,
             next: &Context,
-            arg: Option<*mut u8>,
+            arg: Option<(*mut u8, *mut u8)>,
             done: bool,
         ) -> bool {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
-            if let Some(arg) = arg {
+            if let Some((arg, arg_box)) = arg {
                 start_inner(
                     next.rip,
                     next.rsp,
-                    next.rbp,
                     self as *mut Context as *mut u8, // I guess
                     done,
                     arg,
+                    arg_box,
                 )
             } else {
                 pivot_inner(
@@ -213,11 +212,12 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        let boxed_arg = Box::new(arg) as Box<dyn Any>;
+        let mut arg_box = Box::new(arg) as Box<dyn Any>;
+        let arg = arg_box.downcast_mut::<T>().unwrap() as *mut T; // not ideal
         unsafe {
-            push_raw(&mut rsp, boxed_arg);
+            push_raw(&mut rsp, arg_box);
         }
-        let arg = rsp;
+        let arg_box = rsp;
 
         rsp = align_mut_ptr_down(rsp, 16);
         rsp = unsafe { rsp.offset(-8) };
@@ -240,12 +240,12 @@ mod platform {
             tt.push_front(t);
             println!("tt = {:?}", tt);
         });
-        pivot(Some(arg), false);
+        pivot(Some((arg as *mut u8, arg_box)), false);
 
         println!("start ))");
     }
 
-    fn pivot(arg: Option<*mut u8>, done: bool) {
+    fn pivot(arg: Option<(*mut u8, *mut u8)>, done: bool) {
         // back = active, front = next
 
         println!("pivot ((");
@@ -320,8 +320,8 @@ mod platform {
     }
 
     #[no_mangle]
-    extern "sysv64" fn done(arg: &mut Box<dyn Any>) {
-        *arg = Box::new(());
+    extern "sysv64" fn done(arg_box: &mut Box<dyn Any>) {
+        *arg_box = Box::new(());
 
         pivot(None, true)
     }
