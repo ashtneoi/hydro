@@ -1,6 +1,6 @@
 #![feature(global_asm)]
 
-use std::mem::size_of;
+use std::mem::{align_of, size_of};
 use std::ptr;
 
 /// *extremely* unsafe
@@ -12,9 +12,10 @@ pub(crate) fn align_mut_ptr_down<T>(p: *mut T, alignment: usize) -> *mut T {
     ((p as usize) & !((1<<alignment) - 1)) as *mut T
 }
 
+// TODO: Use preferred alignment?
 /// p need not be aligned.
 pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
-    *p = align_mut_ptr_down(*p, size_of::<T>());
+    *p = align_mut_ptr_down(*p, align_of::<T>());
     *p = ((*p as usize) - size_of::<T>()) as *mut u8;
     ptr::write(*p as *mut T, val);
 }
@@ -32,6 +33,7 @@ mod platform {
         push_raw,
         steal_mut,
     };
+    use std::any::Any;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::fmt;
@@ -86,10 +88,11 @@ mod platform {
             mov rsp, r12
             mov rbp, r13
             mov rdi, r9 # arg
-            push 0
+            push rdi # conveniently needed to align stack
             call r11
-            pop rax
+            pop rdi
             jmp done
+            ud2
 
         pivot_inner:
             push rbp
@@ -197,7 +200,7 @@ mod platform {
         );
     }
 
-    pub fn start<T: Send>(
+    pub fn start<T: Send + 'static>(
         f: extern "sysv64" fn(&mut T),
         arg: T,
     ) {
@@ -210,8 +213,11 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        unsafe { push_raw(&mut rsp, arg); }
-        let arg_ref = rsp;
+        let boxed_arg = Box::new(arg) as Box<dyn Any>;
+        unsafe {
+            push_raw(&mut rsp, boxed_arg);
+        }
+        let arg = rsp;
 
         rsp = align_mut_ptr_down(rsp, 16);
         rsp = unsafe { rsp.offset(-8) };
@@ -234,7 +240,7 @@ mod platform {
             tt.push_front(t);
             println!("tt = {:?}", tt);
         });
-        pivot(Some(arg_ref), false);
+        pivot(Some(arg), false);
 
         println!("start ))");
     }
@@ -253,15 +259,13 @@ mod platform {
                 panic!("main task is not allowed to finish");
             }
 
+            assert_ne!(tt.len(), 0);
             if tt.len() == 1 {
                 return None;
             }
-            assert_ne!(tt.len(), 0);
 
-            {
-                let t = tt.pop_front().unwrap();
-                tt.push_back(t);
-            }
+            let t = tt.pop_front().unwrap();
+            tt.push_back(t);
 
             let next_ctx = {
                 let next_task = tt.back_mut().unwrap();
@@ -316,7 +320,9 @@ mod platform {
     }
 
     #[no_mangle]
-    extern "sysv64" fn done() {
+    extern "sysv64" fn done(arg: &mut Box<dyn Any>) {
+        *arg = Box::new(());
+
         pivot(None, true)
     }
 }
