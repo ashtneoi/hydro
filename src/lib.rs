@@ -20,8 +20,8 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
 }
 
 pub use crate::platform::{
+    done,
     next,
-    remove,
     start,
     Task,
 };
@@ -207,7 +207,7 @@ mod platform {
         println!("start ))");
     }
 
-    fn pivot(arg: Option<*mut u8>, remove: bool) {
+    fn pivot(arg: Option<*mut u8>, done: bool) {
         // back = active, front = next
 
         println!("pivot ((");
@@ -216,6 +216,10 @@ mod platform {
             let mut tt = tt.borrow_mut();
 
             println!("tt = {:?}", tt);
+
+            if done && tt.last().stack.len() == 0 {
+                panic!("main task is not allowed to finish");
+            }
 
             if tt.len() == 1 {
                 return None;
@@ -235,26 +239,36 @@ mod platform {
             println!("tt = {:?}", tt);
             println!("next = {:?}", next_ctx);
 
-            let active_ctx_i = tt.len() - 2;
-            tt[active_ctx_i].ctx = Some(Context::null());
+            let active_i = tt.len() - 2;
+            tt[active_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
                 steal_mut(tt[active_ctx_i].ctx.as_mut().unwrap())
             };
 
             // We stole active_ctx, so it *must not* survive past the end of
-            // next(), and we *must not* modify TASKS until then.
+            // pivot(), and we *must not* modify TASKS until then.
 
             println!("tt = {:?}", tt);
 
             Some((active_ctx, next_ctx))
         });
 
-        if let Some((active_ctx, next_ctx)) = ctxs {
+        let activator_done = if let Some((active_ctx, next_ctx)) = ctxs {
             unsafe {
-                active_ctx.pivot(&next_ctx, arg, remove);
+                active_ctx.pivot(&next_ctx, arg, done)
             }
+        };
 
-            // TODO: And then deal with activator's `remove`.
+        if activator_done {
+            TASKS.with(|tt| {
+                let mut tt = tt.borrow_mut();
+
+                println!("tt = {:?}", tt);
+
+                assert!(tt.len() > 1);
+                let activator_i = tt.len() - 2;
+                tt.remove(activator_i);
+            });
         }
 
         println!("pivot ))");
@@ -264,7 +278,7 @@ mod platform {
         pivot(None, false)
     }
 
-    pub fn remove() {
+    pub fn done() {
         pivot(None, true)
     }
 }
