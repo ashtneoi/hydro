@@ -78,8 +78,8 @@ mod platform {
 
             lea rax, [rip + start_inner_back]
             mov [rcx], rax
-            mov [rcx + 16], rsp
-            mov [rcx + 32], rbp
+            mov [rcx + 8], rsp
+            mov [rcx + 16], rbp
 
             mov rsp, r12
             mov rbp, r13
@@ -107,8 +107,8 @@ mod platform {
 
             lea rax, [rip + pivot_inner_back]
             mov [rcx], rax
-            mov [rcx + 16], rsp
-            mov [rcx + 32], rbp
+            mov [rcx + 8], rsp
+            mov [rcx + 16], rbp
 
             mov rsp, r12
             mov rbp, r13
