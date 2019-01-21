@@ -20,7 +20,6 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
 }
 
 pub use crate::platform::{
-    done,
     next,
     start,
     Task,
@@ -38,21 +37,24 @@ mod platform {
     use std::fmt;
     use std::ptr;
 
+    // `done` must be r8 for both functions.
     extern "sysv64" {
         fn start_inner(
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
             save_ctx: *mut u8, // rcx
-            arg: *mut u8, // r8
-        );
+            done: bool, // r8
+            arg: *mut u8, // r9
+        ) -> bool;
 
         fn pivot_inner(
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
             save_ctx: *mut u8, // rcx
-        );
+            done: bool, // r8
+        ) -> bool;
     }
 
     global_asm!(r#"
@@ -61,6 +63,34 @@ mod platform {
         .global pivot_inner
 
         start_inner:
+            push rbp
+            push rbx
+            push r12
+            push r13
+            push r14
+            push r15
+            push 0
+            vstmxcsr [rsp]
+            push 0
+            fstcw [rsp]
+
+            mov r11, rdi # new rip
+            mov r12, rsi # new rsp
+            mov r13, rdx # new rbp
+
+            lea rax, [rip + pivot_inner_back]
+            mov [rcx], rax
+            mov [rcx + 8], rsp
+            mov [rcx + 16], rbp
+
+            mov rsp, r12
+            mov rbp, r13
+            mov rdi, r9 # arg
+            push 0
+            call r11
+            pop rax
+            jmp done
+
         pivot_inner:
             push rbp
             push rbx
@@ -73,9 +103,9 @@ mod platform {
             push 0
             fstcw [rsp]
 
-            mov r11, rdi // new rip
-            mov r12, rsi // new rsp
-            mov r13, rdx // new rbp
+            mov r11, rdi # new rip
+            mov r12, rsi # new rsp
+            mov r13, rdx # new rbp
 
             lea rax, [rip + pivot_inner_back]
             mov [rcx], rax
@@ -84,7 +114,6 @@ mod platform {
 
             mov rsp, r12
             mov rbp, r13
-            mov rdi, r8 // arg
             jmp r11
 
         pivot_inner_back:
@@ -99,6 +128,7 @@ mod platform {
             pop rbx
             pop rbp
 
+            mov rax, r8 # done
             ret  # TODO: far?
     "#);
 
@@ -124,8 +154,8 @@ mod platform {
             &mut self,
             next: &Context,
             arg: Option<*mut u8>,
-            remove: bool,
-        ) {
+            done: bool,
+        ) -> bool {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
             if let Some(arg) = arg {
@@ -134,15 +164,17 @@ mod platform {
                     next.rsp,
                     next.rbp,
                     self as *mut Context as *mut u8, // I guess
+                    done,
                     arg,
-                );
+                )
             } else {
                 pivot_inner(
                     next.rip,
                     next.rsp,
                     next.rbp,
                     self as *mut Context as *mut u8, // I guess
-                );
+                    done,
+                )
             }
         }
     }
@@ -166,7 +198,7 @@ mod platform {
     }
 
     pub fn start<T: Send>(
-        f: extern "sysv64" fn(&mut T) -> !,
+        f: extern "sysv64" fn(&mut T),
         arg: T,
     ) {
         println!("start ((");
@@ -217,7 +249,7 @@ mod platform {
 
             println!("tt = {:?}", tt);
 
-            if done && tt.last().stack.len() == 0 {
+            if done && tt.back().unwrap().stack.len() == 0 {
                 panic!("main task is not allowed to finish");
             }
 
@@ -242,7 +274,7 @@ mod platform {
             let active_i = tt.len() - 2;
             tt[active_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
-                steal_mut(tt[active_ctx_i].ctx.as_mut().unwrap())
+                steal_mut(tt[active_i].ctx.as_mut().unwrap())
             };
 
             // We stole active_ctx, so it *must not* survive past the end of
@@ -257,6 +289,8 @@ mod platform {
             unsafe {
                 active_ctx.pivot(&next_ctx, arg, done)
             }
+        } else {
+            false
         };
 
         if activator_done {
@@ -266,8 +300,11 @@ mod platform {
                 println!("tt = {:?}", tt);
 
                 assert!(tt.len() > 1);
+
                 let activator_i = tt.len() - 2;
                 tt.remove(activator_i);
+
+                println!("tt = {:?}", tt);
             });
         }
 
@@ -278,7 +315,8 @@ mod platform {
         pivot(None, false)
     }
 
-    pub fn done() {
+    #[no_mangle]
+    extern "sysv64" fn done() {
         pivot(None, true)
     }
 }
