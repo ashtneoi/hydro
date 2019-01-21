@@ -76,7 +76,7 @@ mod platform {
             mov r12, rsi // new rsp
             mov r13, rdx // new rbp
 
-            lea rax, [rip + start_inner_back]
+            lea rax, [rip + pivot_inner_back]
             mov [rcx], rax
             mov [rcx + 8], rsp
             mov [rcx + 16], rbp
