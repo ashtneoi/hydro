@@ -29,6 +29,7 @@ mod platform {
     };
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::fmt;
     use std::ptr;
 
     extern "sysv64" {
@@ -166,12 +167,20 @@ mod platform {
                     self as *mut Context as *mut u8, // I guess
                 );
             }
+
+            println!("saved: {:?}", self);
         }
     }
 
     pub struct Task {
         stack: Vec<u8>,
         ctx: Option<Context>,
+    }
+
+    impl fmt::Debug for Task {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Task([{}], {:?})", self.stack.len(), self.ctx)
+        }
     }
 
     thread_local! {
@@ -213,6 +222,7 @@ mod platform {
         TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
             tt.push_front(t);
+            println!("tt = {:?}", tt);
         });
         pivot(Some(arg_ref), false);
     }
@@ -238,6 +248,8 @@ mod platform {
                 next_task.ctx.take().unwrap()
             };
 
+            println!("tt = {:?}", tt);
+
             let active_ctx_i = tt.len() - 2;
             tt[active_ctx_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
@@ -250,6 +262,8 @@ mod platform {
             // We stole active_ctx, so it *must not* survive past the end of
             // next(), and we *must not* modify TASKS until then.
 
+            println!("tt = {:?}", tt);
+
             Some((active_ctx, next_ctx))
         });
 
@@ -258,7 +272,7 @@ mod platform {
                 active_ctx.pivot(&next_ctx, arg, remove);
             }
 
-            // TODO: And then deal with activater's `remove`.
+            // TODO: And then deal with activator's `remove`.
         }
     }
 
