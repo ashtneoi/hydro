@@ -19,6 +19,7 @@ pub(crate) unsafe fn push_raw<T>(p: &mut *mut u8, val: T) {
 
 pub use crate::platform::{
     next,
+    remove,
     start,
     Task,
 };
@@ -39,15 +40,7 @@ mod platform {
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
-            save_rip: *mut *const u8, // rcx
-            save_rsp: *mut *mut u8, // r8
-            save_rbp: *mut *mut u8, // r9
-        );
-
-        fn remove_inner(
-            rip: *const u8, // rdi
-            rsp: *mut u8, // rsi
-            rbp: *mut u8, // rdx
+            save_ctx: *mut (), // rcx
         );
     }
 
@@ -68,18 +61,17 @@ mod platform {
             push 0
             fstcw [rsp]
 
-            mov r11, rdi // new rip
             mov r12, rsi // new rsp
             mov r13, rdx // new rbp
 
             lea rax, [rip+pivot_inner_back]
             mov [rcx], rax
-            mov [r8], rsp
-            mov [r9], rbp
+            mov [rcx + 16], rsp
+            mov [rcx + 32], rbp
 
             mov rsp, r12
             mov rbp, r13
-            jmp r11
+            jmp rdi
 
         pivot_inner_back:
             fldcw [rsp]
@@ -94,14 +86,10 @@ mod platform {
             pop rbp
 
             ret  # TODO: far?
-
-        remove_inner:
-            mov rsp, rsi // new rsp
-            mov rbp, rdx // new rbp
-            jmp rdi
     "#);
 
     #[derive(Clone, Copy)]
+    #[repr(C)]
     struct Context {
         rip: *const u8,
         rsp: *mut u8,
@@ -117,21 +105,15 @@ mod platform {
             }
         }
 
-        pub(crate) unsafe fn pivot(&mut self, next: &Context) {
-            let (save_rip, save_rsp, save_rbp) = (
-                &mut self.rip as *mut *const u8,
-                &mut self.rsp as *mut *mut u8,
-                &mut self.rbp as *mut *mut u8,
-            );
+        pub(crate) unsafe fn pivot(&mut self, next: &Context, remove: bool) {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+
             unsafe {
                 pivot_inner(
                     next.rip,
                     next.rsp,
                     next.rbp,
-                    save_rip,
-                    save_rsp,
-                    save_rbp,
+                    self as *mut Context as *mut (), // I guess
                 );
             }
         }
@@ -140,9 +122,6 @@ mod platform {
     pub struct Task {
         stack: Vec<u8>,
         ctx: Option<Context>,
-    }
-
-    impl Pool for PollingRoundRobinPool {
     }
 
     thread_local! {
@@ -188,7 +167,7 @@ mod platform {
         next();
     }
 
-    pub fn next() {
+    fn pivot(remove: bool) {
         // back = active, front = next
 
         let ctxs = tasks.with(|tt| {
@@ -226,40 +205,16 @@ mod platform {
 
         if let Some((active_ctx, next_ctx)) = ctxs {
             unsafe {
-                active_ctx.pivot(&next_ctx);
+                active_ctx.pivot(&next_ctx, remove);
             }
         }
     }
 
-    fn remove() {
-        assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+    pub fn next() {
+        pivot(false)
+    }
 
-        let (active_stack, next_ctx) = tasks.with(|tt| {
-            let mut tt = tt.borrow_mut();
-
-            if tt.back().unwrap().stack.len() == 0 {
-                panic!("can't remove main task");
-            }
-            if tt.len() == 1 { // TODO: error, not panic
-                panic!("can't remove only task");
-            }
-            assert_ne!(tt.len(), 0);
-
-            let mut active_stack = tt.pop_back().unwrap();
-            active_task.ctx = Some(Context
-
-            {
-                let t = tt.pop_front().unwrap();
-                tt.push_back(t);
-            }
-
-            (active_stack, next_ctx)
-        });
-
-        unsafe {
-            active.ctx.unwrap().pivot(
-                &tt.back().unwrap().ctx.unwrap()
-            );
-        }
+    pub fn remove() {
+        pivot(true)
     }
 }
