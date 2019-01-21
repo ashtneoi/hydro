@@ -1,30 +1,41 @@
 extern crate hydro;
 
 use hydro::{next, start};
+use std::sync::mpsc;
 
-struct X;
-
-impl Drop for X {
-    fn drop(&mut self) {
-        println!("oh noes i got dropped");
+extern "sysv64" fn go(recver: &mut mpsc::Receiver<String>) {
+    loop {
+        match recver.try_recv() {
+            Ok(x) => {
+                println!("{}", x);
+            },
+            Err(mpsc::TryRecvError::Empty) => {
+                next();
+            },
+            Err(mpsc::TryRecvError::Disconnected) => {
+                break;
+            },
+        }
     }
-}
 
-extern "sysv64" fn go(arg: &mut X) {
-    for _ in 0..8 {
-        println!("go!");
-        next();
-    }
+    println!("all done");
 }
 
 fn main() {
-    start(go, X);
+    let (sender, recver) = mpsc::channel();
+    start(go, recver);
     let mut a = 12.0;
-    if true {
+    for i in 0..10 {
         a += 13.7;
-    }
-    for _ in 0..10 {
-        println!("a = {}", a);
+        sender.send(
+            format!("hi there from iteration {}", i)
+        ).unwrap();
+        sender.send(
+            format!("btw a = {}", a)
+        ).unwrap();
         next();
     }
+
+    drop(sender);
+    next();
 }
