@@ -61,34 +61,6 @@ mod platform {
         .global pivot_inner
 
         start_inner:
-            push rbp
-            push rbx
-            push r12
-            push r13
-            push r14
-            push r15
-            push 0
-            vstmxcsr [rsp]
-            push 0
-            fstcw [rsp]
-
-            mov r11, rdi // new rip
-            mov r12, rsi // new rsp
-            mov r13, rdx // new rbp
-
-            lea rax, [rip + pivot_inner_back]
-            mov [rcx], rax
-            mov [rcx + 8], rsp
-            mov [rcx + 16], rbp
-
-            mov rsp, r12
-            mov rbp, r13
-            mov rdi, r8 // arg
-            jmp r11
-
-        start_inner_back:
-            ud2
-
         pivot_inner:
             push rbp
             push rbx
@@ -112,6 +84,7 @@ mod platform {
 
             mov rsp, r12
             mov rbp, r13
+            mov rdi, r8 // arg
             jmp r11
 
         pivot_inner_back:
