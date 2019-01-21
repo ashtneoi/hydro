@@ -203,8 +203,6 @@ mod platform {
         f: extern "sysv64" fn(&mut T),
         arg: T,
     ) {
-        println!("start ((");
-
         assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
         let mut stack = Vec::with_capacity(1<<18);
@@ -236,24 +234,16 @@ mod platform {
 
         TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
-            println!("tt = {:?}", tt);
             tt.push_front(t);
-            println!("tt = {:?}", tt);
         });
         pivot(Some((arg as *mut u8, arg_box)), false);
-
-        println!("start ))");
     }
 
     fn pivot(arg: Option<(*mut u8, *mut u8)>, done: bool) {
         // back = active, front = next
 
-        println!("pivot ((");
-
         let ctxs = TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
-
-            println!("tt = {:?}", tt);
 
             if done && tt.back().unwrap().stack.len() == 0 {
                 panic!("main task is not allowed to finish");
@@ -272,9 +262,6 @@ mod platform {
                 next_task.ctx.take().unwrap()
             };
 
-            println!("tt = {:?}", tt);
-            println!("next = {:?}", next_ctx);
-
             let active_i = tt.len() - 2;
             tt[active_i].ctx = Some(Context::null());
             let active_ctx = unsafe {
@@ -283,8 +270,6 @@ mod platform {
 
             // We stole active_ctx, so it *must not* survive past the end of
             // pivot(), and we *must not* modify TASKS until then.
-
-            println!("tt = {:?}", tt);
 
             Some((active_ctx, next_ctx))
         });
@@ -301,18 +286,12 @@ mod platform {
             TASKS.with(|tt| {
                 let mut tt = tt.borrow_mut();
 
-                println!("tt = {:?}", tt);
-
                 assert!(tt.len() > 1);
 
                 let activator_i = tt.len() - 2;
                 tt.remove(activator_i);
-
-                println!("tt = {:?}", tt);
             });
         }
-
-        println!("pivot ))");
     }
 
     pub fn next() {
