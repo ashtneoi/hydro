@@ -1,8 +1,5 @@
 #![feature(global_asm)]
 
-#[macro_use]
-extern crate lazy_static;
-
 use std::mem::size_of;
 use std::ptr;
 
@@ -30,10 +27,9 @@ mod platform {
         align_mut_ptr_down,
         push_raw,
     };
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::ptr;
-    use std::sync::Mutex;
 
     extern "sysv64" {
         fn start_inner(
@@ -126,7 +122,7 @@ mod platform {
             ret  # TODO: far?
     "#);
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     #[repr(C)]
     struct Context {
         rip: *const u8,
@@ -152,23 +148,23 @@ mod platform {
         ) {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
-            unsafe {
-                if let Some(arg) = arg {
-                    start_inner(
-                        next.rip,
-                        next.rsp,
-                        next.rbp,
-                        self as *mut Context as *mut u8, // I guess
-                        arg,
-                    );
-                } else {
-                    pivot_inner(
-                        next.rip,
-                        next.rsp,
-                        next.rbp,
-                        self as *mut Context as *mut u8, // I guess
-                    );
-                }
+            println!("next: {:?}", next);
+
+            if let Some(arg) = arg {
+                start_inner(
+                    next.rip,
+                    next.rsp,
+                    next.rbp,
+                    self as *mut Context as *mut u8, // I guess
+                    arg,
+                );
+            } else {
+                pivot_inner(
+                    next.rip,
+                    next.rsp,
+                    next.rbp,
+                    self as *mut Context as *mut u8, // I guess
+                );
             }
         }
     }
@@ -180,7 +176,7 @@ mod platform {
 
     thread_local! {
         // back = active, front = next
-        static tasks: RefCell<VecDeque<Task>> = RefCell::new(
+        static TASKS: RefCell<VecDeque<Task>> = RefCell::new(
             vec![Task { stack: vec![], ctx: None }].into()
         );
     }
@@ -214,7 +210,7 @@ mod platform {
 
         // back = active, front = next
 
-        tasks.with(|tt| {
+        TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
             tt.push_front(t);
         });
@@ -224,7 +220,7 @@ mod platform {
     fn pivot(arg: Option<*mut u8>, remove: bool) {
         // back = active, front = next
 
-        let ctxs = tasks.with(|tt| {
+        let ctxs = TASKS.with(|tt| {
             let mut tt = tt.borrow_mut();
 
             if tt.len() == 1 {
@@ -252,7 +248,7 @@ mod platform {
             };
 
             // We stole active_ctx, so it *must not* survive past the end of
-            // next(), and we *must not* modify the tasks vec until then.
+            // next(), and we *must not* modify TASKS until then.
 
             Some((active_ctx, next_ctx))
         });
@@ -261,9 +257,9 @@ mod platform {
             unsafe {
                 active_ctx.pivot(&next_ctx, arg, remove);
             }
-        }
 
-        // TODO: And then deal with activater's `remove`.
+            // TODO: And then deal with activater's `remove`.
+        }
     }
 
     pub fn next() {
