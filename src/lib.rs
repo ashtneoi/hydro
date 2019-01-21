@@ -88,6 +88,7 @@ mod platform {
             # rbp doesn't matter
             mov rdi, r8 # arg
             push r9 # conveniently needed to align stack
+            emms
             call r11
             pop rdi # arg_box
             jmp done
