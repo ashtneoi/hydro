@@ -5,11 +5,8 @@ use hydro::sync::mpsc::ReceiverExt;
 use std::sync::mpsc;
 
 extern "sysv64" fn go(recver: &mut mpsc::Receiver<String>) {
-    loop {
-        match recver.hydro_recv() {
-            Ok(x) => println!("{}", x),
-            Err(_) => break,
-        }
+    for x in recver.hydro_iter() {
+        println!("{}", x);
     }
 
     println!("all done");
