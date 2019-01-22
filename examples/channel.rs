@@ -1,20 +1,14 @@
 extern crate hydro;
 
 use hydro::task::{next, start};
+use hydro::sync::mpsc::ReceiverExt;
 use std::sync::mpsc;
 
 extern "sysv64" fn go(recver: &mut mpsc::Receiver<String>) {
     loop {
-        match recver.try_recv() {
-            Ok(x) => {
-                println!("{}", x);
-            },
-            Err(mpsc::TryRecvError::Empty) => {
-                next();
-            },
-            Err(mpsc::TryRecvError::Disconnected) => {
-                break;
-            },
+        match recver.hydro_recv() {
+            Ok(x) => println!("{}", x),
+            Err(_) => break,
         }
     }
 
