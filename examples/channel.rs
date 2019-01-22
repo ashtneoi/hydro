@@ -1,6 +1,6 @@
 extern crate hydro;
 
-use hydro::{next, start};
+use hydro::task::{next, start};
 use std::sync::mpsc;
 
 extern "sysv64" fn go(recver: &mut mpsc::Receiver<String>) {
