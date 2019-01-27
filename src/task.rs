@@ -23,8 +23,8 @@ mod platform {
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             save_ctx: *mut u8, // rdx
-            done: bool, // rcx
-            arg: *mut u8, // r8
+            arg: *mut u8, // rcx
+            done: bool, // r8
             arg_box: *mut u8, // r9
         ) -> bool;
 
@@ -64,7 +64,7 @@ mod platform {
 
             mov rsp, r12
             # rbp doesn't matter
-            mov rdi, r8 # arg
+            mov rdi, rcx # arg
             push r9 # conveniently needed to align stack
             emms
             call r11
@@ -144,8 +144,8 @@ mod platform {
                     next.rip,
                     next.rsp,
                     self as *mut Context as *mut u8, // I guess
-                    done,
                     arg,
+                    done,
                     arg_box,
                 )
             } else {
