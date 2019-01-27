@@ -13,8 +13,8 @@ extern "sysv64" fn go(recver: &mut mpsc::Receiver<String>) {
 }
 
 fn main() {
-    let (sender, recver) = mpsc::channel();
-    start(go, recver);
+    let (sender, mut recver) = mpsc::channel();
+    start(move || go(&mut recver));
     let mut a = 12.0;
     for i in 0..10 {
         a += 13.7;

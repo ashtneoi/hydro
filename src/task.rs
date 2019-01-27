@@ -34,13 +34,18 @@ mod platform {
     use std::fmt;
     use std::ptr;
 
+    #[no_mangle]
+    extern "sysv64" fn go(f: &mut Box<dyn FnMut()>) {
+        f()
+    }
+
     // `done` must be r8 for both functions.
     extern "sysv64" {
         fn start_inner(
-            rip: *const u8, // rdi
+            _: *const u8, // rdi
             rsp: *mut u8, // rsi
             save_ctx: *mut u8, // rdx
-            arg: *mut u8, // rcx
+            _: *mut u8, // rcx
             done: bool, // r8
             arg_box: *mut u8, // r9
         ) -> bool;
@@ -71,7 +76,6 @@ mod platform {
             push 0
             fstcw [rsp]
 
-            mov r11, rdi # new rip
             mov r12, rsi # new rsp
 
             lea rax, [rip + pivot_inner_back]
@@ -81,10 +85,10 @@ mod platform {
 
             mov rsp, r12
             # rbp doesn't matter
-            mov rdi, rcx # arg
-            push r9 # conveniently needed to align stack
+            mov rdi, r9 # arg_box
+            push rdi # conveniently needed to align stack
             emms
-            call r11
+            call go
             pop rdi # arg_box
             jmp done
             ud2
@@ -195,9 +199,9 @@ mod platform {
         );
     }
 
-    pub fn start<T: Send + 'static>(
-        f: extern "sysv64" fn(&mut T),
-        arg: T,
+    // TODO: Make this FnOnce since we only call it once.
+    pub fn start<F: FnMut() + Send + 'static>(
+        f: F,
     ) {
         assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
@@ -206,8 +210,7 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        let mut arg_box = Box::new(arg) as Box<dyn Any>;
-        let arg = arg_box.downcast_mut::<T>().unwrap() as *mut T; // not ideal
+        let mut arg_box = Box::new(f) as Box<dyn FnMut()>;
         unsafe {
             push_raw(&mut rsp, arg_box);
         }
@@ -220,7 +223,7 @@ mod platform {
         let t = Task {
             stack,
             ctx: Some(Context {
-                rip: f as *const u8,
+                rip: ptr::null(),
                 rsp,
                 rbp: ptr::null_mut(),
             }),
@@ -232,7 +235,7 @@ mod platform {
             let mut tt = tt.borrow_mut();
             tt.push_front(t);
         });
-        pivot(Some((arg as *mut u8, arg_box)), false);
+        pivot(Some((ptr::null_mut(), arg_box)), false);
     }
 
     fn pivot(arg: Option<(*mut u8, *mut u8)>, done: bool) {
@@ -295,8 +298,8 @@ mod platform {
     }
 
     #[no_mangle]
-    extern "sysv64" fn done(arg_box: &mut Box<dyn Any>) {
-        *arg_box = Box::new(());
+    extern "sysv64" fn done(arg_box: &mut Box<dyn FnMut()>) {
+        *arg_box = Box::new(|| ());
 
         pivot(None, true)
     }
