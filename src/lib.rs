@@ -1,3 +1,4 @@
+#![feature(fnbox)]
 #![feature(global_asm)]
 
 pub mod net;

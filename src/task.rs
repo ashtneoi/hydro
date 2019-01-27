@@ -28,15 +28,16 @@ mod platform {
         push_raw,
         steal_mut,
     };
-    use std::any::Any;
+    use std::boxed::FnBox;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::fmt;
     use std::ptr;
 
     #[no_mangle]
-    extern "sysv64" fn go(f: &mut Box<dyn FnMut()>) {
-        f()
+    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>) {
+        let b: Box<_> = f.take().unwrap();
+        b()
     }
 
     // `done` must be r8 for both functions.
@@ -86,10 +87,10 @@ mod platform {
             mov rsp, r12
             # rbp doesn't matter
             mov rdi, r9 # arg_box
-            push rdi # conveniently needed to align stack
+            push 0 # align stack
             emms
             call go
-            pop rdi # arg_box
+            pop rax
             jmp done
             ud2
 
@@ -199,8 +200,7 @@ mod platform {
         );
     }
 
-    // TODO: Make this FnOnce since we only call it once.
-    pub fn start<F: FnMut() + Send + 'static>(
+    pub fn start<F: FnOnce() + Send + 'static>(
         f: F,
     ) {
         assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
@@ -210,7 +210,7 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        let mut arg_box = Box::new(f) as Box<dyn FnMut()>;
+        let arg_box = Some(Box::new(f) as Box<dyn FnBox()>);
         unsafe {
             push_raw(&mut rsp, arg_box);
         }
@@ -298,9 +298,7 @@ mod platform {
     }
 
     #[no_mangle]
-    extern "sysv64" fn done(arg_box: &mut Box<dyn FnMut()>) {
-        *arg_box = Box::new(|| ());
-
+    extern "sysv64" fn done() {
         pivot(None, true)
     }
 }
