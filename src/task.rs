@@ -4,6 +4,23 @@ pub use self::platform::{
     Task,
 };
 
+pub fn wait_result<X, E1, E2, F, G>(mut f: F, mut g: G) -> Result<X, E2>
+where
+    F: FnMut() -> Result<X, E1>,
+    G: FnMut(E1) -> Option<E2>,
+{
+    loop {
+        match f() {
+            Ok(x) => return Ok(x),
+            Err(e) => match g(e) {
+                Some(e) => return Err(e),
+                None => (),
+            },
+        }
+        next();
+    }
+}
+
 #[cfg(all(unix, target_arch = "x86_64"))]
 mod platform {
     use crate::util::{
