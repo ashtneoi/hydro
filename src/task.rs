@@ -141,32 +141,6 @@ mod platform {
                 rbp: ptr::null_mut(),
             }
         }
-
-        // TODO: bit weird to go from start() to pivot() to start_inner()
-        pub(crate) unsafe fn pivot(
-            &mut self,
-            next: &Context,
-            f: Option<(*mut u8, *mut u8)>,
-            done: bool,
-        ) -> bool {
-            assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
-
-            if let Some((_, f)) = f {
-                start_inner(
-                    f,
-                    next.rsp,
-                    self as *mut Context as *mut u8, // I guess
-                )
-            } else {
-                pivot_inner(
-                    next.rip,
-                    next.rsp,
-                    next.rbp,
-                    done,
-                    self as *mut Context as *mut u8, // I guess
-                )
-            }
-        }
     }
 
     pub struct Task {
@@ -263,7 +237,23 @@ mod platform {
 
         let activator_done = if let Some((active_ctx, next_ctx)) = ctxs {
             unsafe {
-                active_ctx.pivot(&next_ctx, f, done)
+                assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
+
+                if let Some((_, f)) = f {
+                    start_inner(
+                        f,
+                        next_ctx.rsp,
+                        active_ctx as *mut Context as *mut u8, // I guess
+                    )
+                } else {
+                    pivot_inner(
+                        next_ctx.rip,
+                        next_ctx.rsp,
+                        next_ctx.rbp,
+                        done,
+                        active_ctx as *mut Context as *mut u8, // I guess
+                    )
+                }
             }
         } else {
             false
