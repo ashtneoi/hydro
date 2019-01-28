@@ -40,23 +40,19 @@ mod platform {
         b()
     }
 
-    // `done` must be r8 for both functions.
     extern "sysv64" {
         fn start_inner(
-            _: *const u8, // rdi
+            f: *mut u8, // rdi
             rsp: *mut u8, // rsi
             save_ctx: *mut u8, // rdx
-            _: *mut u8, // rcx
-            done: bool, // r8
-            arg_box: *mut u8, // r9
         ) -> bool;
 
         fn pivot_inner(
             rip: *const u8, // rdi
             rsp: *mut u8, // rsi
             rbp: *mut u8, // rdx
-            save_ctx: *mut u8, // rcx
-            done: bool, // r8
+            done: bool, // rcx
+            save_ctx: *mut u8, // r8
         ) -> bool;
     }
 
@@ -86,13 +82,11 @@ mod platform {
 
             mov rsp, r12
             # rbp doesn't matter
-            mov rdi, r9 # arg_box
             push 0 # align stack
             emms
             call go
-            pop rax
+            pop rax # don't care
             jmp done
-            ud2
 
         pivot_inner:
             push rbp
@@ -109,11 +103,12 @@ mod platform {
             mov r11, rdi # new rip
             mov r12, rsi # new rsp
             mov r13, rdx # new rbp
+            mov r14, rcx # done
 
             lea rax, [rip + pivot_inner_back]
-            mov [rcx], rax
-            mov [rcx + 8], rsp
-            mov [rcx + 16], rbp
+            mov [r8], rax
+            mov [r8 + 8], rsp
+            mov [r8 + 16], rbp
 
             mov rsp, r12
             mov rbp, r13
@@ -131,7 +126,7 @@ mod platform {
             pop rbx
             pop rbp
 
-            mov rax, r8 # done
+            mov rax, r14 # done
             ret  # TODO: far?
     "#);
 
@@ -156,27 +151,24 @@ mod platform {
         pub(crate) unsafe fn pivot(
             &mut self,
             next: &Context,
-            arg: Option<(*mut u8, *mut u8)>,
+            f: Option<(*mut u8, *mut u8)>,
             done: bool,
         ) -> bool {
             assert!(is_x86_feature_detected!("avx")); // for vstmxcsr
 
-            if let Some((arg, arg_box)) = arg {
+            if let Some((_, f)) = f {
                 start_inner(
-                    next.rip,
+                    f,
                     next.rsp,
                     self as *mut Context as *mut u8, // I guess
-                    arg,
-                    done,
-                    arg_box,
                 )
             } else {
                 pivot_inner(
                     next.rip,
                     next.rsp,
                     next.rbp,
-                    self as *mut Context as *mut u8, // I guess
                     done,
+                    self as *mut Context as *mut u8, // I guess
                 )
             }
         }
@@ -210,11 +202,11 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        let arg_box = Some(Box::new(f) as Box<dyn FnBox()>);
+        let f = Some(Box::new(f) as Box<dyn FnBox()>);
         unsafe {
-            push_raw(&mut rsp, arg_box);
+            push_raw(&mut rsp, f);
         }
-        let arg_box = rsp;
+        let f = rsp;
 
         rsp = align_mut_ptr_down(rsp, 16);
         rsp = unsafe { rsp.offset(-8) };
@@ -235,10 +227,10 @@ mod platform {
             let mut tt = tt.borrow_mut();
             tt.push_front(t);
         });
-        pivot(Some((ptr::null_mut(), arg_box)), false);
+        pivot(Some((ptr::null_mut(), f)), false);
     }
 
-    fn pivot(arg: Option<(*mut u8, *mut u8)>, done: bool) {
+    fn pivot(f: Option<(*mut u8, *mut u8)>, done: bool) {
         // back = active, front = next
 
         let ctxs = TASKS.with(|tt| {
@@ -275,7 +267,7 @@ mod platform {
 
         let activator_done = if let Some((active_ctx, next_ctx)) = ctxs {
             unsafe {
-                active_ctx.pivot(&next_ctx, arg, done)
+                active_ctx.pivot(&next_ctx, f, done)
             }
         } else {
             false
