@@ -35,16 +35,33 @@ mod platform {
     use std::ptr;
 
     #[no_mangle]
-    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>) {
-        let b: Box<_> = f.take().unwrap();
-        b()
+    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>, done: bool) {
+        if done {
+            TASKS.with(|tt| {
+                let mut tt = tt.borrow_mut();
+
+                assert!(tt.len() > 1);
+
+                let activator_i = tt.len() - 2;
+
+                if tt[activator_i].stack.len() == 0 {
+                    panic!("main task is not allowed to finish");
+                }
+
+                tt.remove(activator_i);
+            });
+        }
+
+        let f: Box<_> = f.take().unwrap();
+        f();
     }
 
     extern "sysv64" {
         fn start_inner(
             f: *mut u8, // rdi
-            rsp: *mut u8, // rsi
-            save_ctx: *mut u8, // rdx
+            done: bool, // rsi
+            rsp: *mut u8, // rdx
+            save_ctx: *mut u8, // rcx
         ) -> bool;
 
         fn pivot_inner(
@@ -73,14 +90,12 @@ mod platform {
             push 0
             fstcw [rsp]
 
-            mov r12, rsi # new rsp
-
             lea rax, [rip + pivot_inner_back]
-            mov [rdx], rax
-            mov [rdx + 8], rsp
-            mov [rdx + 16], rbp
+            mov [rcx], rax
+            mov [rcx + 8], rsp
+            mov [rcx + 16], rbp
 
-            mov rsp, r12
+            mov rsp, rdx
             # rbp doesn't matter
             push 0 # align stack
             emms
@@ -95,24 +110,20 @@ mod platform {
             push r13
             push r14
             push r15
-            push 0
+            push 0 # don't care
             vstmxcsr [rsp]
-            push 0
+            push 0 # don't care
             fstcw [rsp]
-
-            mov r11, rdi # new rip
-            mov r12, rsi # new rsp
-            mov r13, rdx # new rbp
-            mov r14, rcx # done
 
             lea rax, [rip + pivot_inner_back]
             mov [r8], rax
             mov [r8 + 8], rsp
             mov [r8 + 16], rbp
 
-            mov rsp, r12
-            mov rbp, r13
-            jmp r11
+            mov r14, rcx # done
+            mov rsp, rsi
+            mov rbp, rdx
+            jmp rdi # --> another task's pivot_inner_back
 
         pivot_inner_back:
             mov rax, r14 # done
@@ -160,6 +171,7 @@ mod platform {
             if let Some((_, f)) = f {
                 start_inner(
                     f,
+                    done,
                     next.rsp,
                     self as *mut Context as *mut u8, // I guess
                 )
@@ -262,6 +274,7 @@ mod platform {
 
             // We stole active_ctx, so it *must not* survive past the end of
             // pivot(), and we *must not* modify TASKS until then.
+            // TODO: Are we violating this with the call to tt.remove below?
 
             Some((active_ctx, next_ctx))
         });
