@@ -115,10 +115,12 @@ mod platform {
             jmp r11
 
         pivot_inner_back:
+            mov rax, r14 # done
+
             fldcw [rsp]
-            pop rax
+            pop rdx # don't care
             vldmxcsr [rsp]
-            pop rax
+            pop rdx # don't care
             pop r15
             pop r14
             pop r13
@@ -126,7 +128,6 @@ mod platform {
             pop rbx
             pop rbp
 
-            mov rax, r14 # done
             ret  # TODO: far?
     "#);
 
