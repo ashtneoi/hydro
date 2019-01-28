@@ -35,23 +35,7 @@ mod platform {
     use std::ptr;
 
     #[no_mangle]
-    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>, done: bool) {
-        if done {
-            TASKS.with(|tt| {
-                let mut tt = tt.borrow_mut();
-
-                assert!(tt.len() > 1);
-
-                let activator_i = tt.len() - 2;
-
-                if tt[activator_i].stack.len() == 0 {
-                    panic!("main task is not allowed to finish");
-                }
-
-                tt.remove(activator_i);
-            });
-        }
-
+    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>) {
         let f: Box<_> = f.take().unwrap();
         f();
     }
@@ -59,9 +43,8 @@ mod platform {
     extern "sysv64" {
         fn start_inner(
             f: *mut u8, // rdi
-            done: bool, // rsi
-            rsp: *mut u8, // rdx
-            save_ctx: *mut u8, // rcx
+            rsp: *mut u8, // rsi
+            save_ctx: *mut u8, // rdx
         ) -> bool;
 
         fn pivot_inner(
@@ -91,11 +74,11 @@ mod platform {
             fstcw [rsp]
 
             lea rax, [rip + pivot_inner_back]
-            mov [rcx], rax
-            mov [rcx + 8], rsp
-            mov [rcx + 16], rbp
+            mov [rdx], rax
+            mov [rdx + 8], rsp
+            mov [rdx + 16], rbp
 
-            mov rsp, rdx
+            mov rsp, rsi
             # rbp doesn't matter
             push 0 # align stack
             emms
@@ -171,7 +154,6 @@ mod platform {
             if let Some((_, f)) = f {
                 start_inner(
                     f,
-                    done,
                     next.rsp,
                     self as *mut Context as *mut u8, // I guess
                 )
