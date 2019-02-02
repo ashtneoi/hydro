@@ -3,6 +3,8 @@ extern crate hydro;
 use hydro::net::TcpListenerExt;
 use hydro::task::{next, start};
 use std::net;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn main() {
     start(move || {
@@ -21,5 +23,8 @@ fn main() {
             println!("10001");
         }
     });
-    loop { next(); }
+    loop {
+        next();
+        sleep(Duration::from_millis(100));
+    }
 }
