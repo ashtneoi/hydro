@@ -28,14 +28,13 @@ mod platform {
         push_raw,
         steal_mut,
     };
-    use std::boxed::FnBox;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::fmt;
     use std::ptr;
 
     #[no_mangle]
-    extern "sysv64" fn go(f: &mut Option<Box<dyn FnBox()>>) {
+    extern "sysv64" fn go(f: &mut Option<Box<dyn FnOnce()>>) {
         let f: Box<_> = f.take().unwrap();
         f();
     }
@@ -171,7 +170,7 @@ mod platform {
         unsafe { stack.set_len(1<<18); }
         let mut rsp = stack.last_mut().unwrap() as *mut u8;
 
-        let f = Some(Box::new(f) as Box<dyn FnBox()>);
+        let f = Some(Box::new(f) as Box<dyn FnOnce()>);
         unsafe {
             push_raw(&mut rsp, f);
         }
